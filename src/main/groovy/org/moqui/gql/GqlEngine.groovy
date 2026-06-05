@@ -40,6 +40,7 @@ class GqlEngine {
     private final int maxFirst
     private final int maxRowsPerLevel
     private final int serviceBatchKeyLimit
+    private final Map<String, Integer> govCfg
 
     GqlEngine(ExecutionContext ec) {
         this.ec = ec
@@ -49,6 +50,15 @@ class GqlEngine {
         this.maxFirst = (sysOr("gql.maxFirst", "100")) as int
         this.maxRowsPerLevel = (sysOr("gql.maxRowsPerLevel", "5000")) as int
         this.serviceBatchKeyLimit = (sysOr("gql.serviceBatchKeyLimit", "1000")) as int
+        this.govCfg = [
+                maxDepth             : (sysOr("gql.maxDepth", "6")) as int,
+                maxCost              : (sysOr("gql.maxCost", "1000")) as int,
+                maxFirst             : maxFirst,
+                serviceBatchKeyLimit : serviceBatchKeyLimit,
+                maxInventoryKeys     : (sysOr("gql.maxInventoryKeys", "500")) as int,
+                unindexedFilterPenalty: (sysOr("gql.unindexedFilterPenalty", "50")) as int,
+                serviceFixedCost     : (sysOr("gql.serviceFixedCost", "25")) as int,
+                wallClockBudgetMs    : (sysOr("gql.wallClockBudgetMs", "30000")) as int]
     }
 
     private static String sysOr(String n, String d) { String v = System.getProperty(n); return v != null ? v : d }
@@ -56,7 +66,9 @@ class GqlEngine {
     Map execute(String query, Map variables, String operationName) {
         List<NestedEdgeMeta> metas = nestedEdgeMetas()
         GraphQLSchema executable = withFetchers(metas)
-        GraphQL graphQL = GraphQL.newGraphQL(executable).build()
+        // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB)
+        GraphQL graphQL = GraphQL.newGraphQL(executable)
+                .instrumentation(new GovernorInstrumentation(ec, built, govCfg)).build()
         ExecutionInput.Builder inB = ExecutionInput.newExecutionInput().query(query)
                 .dataLoaderRegistry(buildRegistry(metas))
         if (variables != null) inB.variables(variables)
@@ -64,7 +76,7 @@ class GqlEngine {
         ExecutionInput input = inB.build()
         // decision 10: one read-only transaction on the calling thread
         ExecutionResult er = (ExecutionResult) ec.transaction.runUseOrBegin(queryTimeoutSeconds, "gql execute error", { graphQL.execute(input) })
-        return [data: er.getData(), errors: er.getErrors().collect { it.getMessage() }]
+        return [data: er.getData(), errors: er.getErrors().collect { [message: it.getMessage(), extensions: it.getExtensions()] }]
     }
 
     /** Resolve batching metadata for every nested has-many (list) edge from the Moqui relationship model. */

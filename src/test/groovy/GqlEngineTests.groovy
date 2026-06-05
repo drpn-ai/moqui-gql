@@ -100,7 +100,8 @@ class GqlEngineTests extends Specification {
                 'query { orders(first:5, query:"bogusKey:X"){ edges{ node{ orderId } } } }', [:], null)
         then:
         !r.errors.isEmpty()
-        r.errors.any { it.contains("FIELD_NOT_FILTERABLE") || it.contains("not filterable") }
+        r.errors.any { it.extensions?.code == "FIELD_NOT_FILTERABLE" }   // structured code (C4 governor, pre-execution)
+        r.data?.orders == null                                            // rejected before any DB hit
     }
 
     def "backward pagination (last/before) returns the items immediately before the cursor, in order"() {
@@ -141,9 +142,9 @@ class GqlEngineTests extends Specification {
     def "list path batches nested orderItems across multiple parents, each grouped to its own order"() {
         given: "filter to two orders that both have items (one IN-batch over two parent keys)"
         def q = "orderId:" + twoOrderIdsWithItems.join(",")
-        when:
+        when: "first values kept within the C4 cost budget (filter returns just the two orders)"
         def r = new GqlEngine(ec).execute(
-                'query Q($q:String){ orders(first:10, query:$q){ edges{ node{ orderId orderItems(first:50){ edges{ node{ orderId } } } } } } }',
+                'query Q($q:String){ orders(first:5, query:$q){ edges{ node{ orderId orderItems(first:20){ edges{ node{ orderId } } } } } } }',
                 [q: q], "Q")
         then:
         r.errors.isEmpty()
