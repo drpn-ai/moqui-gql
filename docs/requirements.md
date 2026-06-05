@@ -7,7 +7,8 @@ indexed search, BI facts, client views) *is* the requirement set.
 **Method:** Four inventories across the suite — published REST APIs, DataDocuments/feeds/BI,
 the `unigate` standalone API + remote services + search, and client components (`gorjana-maarg`,
 `notnaked`).
-**Feeds:** the main design spec (`2026-06-03-moqui-graphql-query-layer-design.md`).
+**Feeds:** the main design spec (`design.md`), the SDL contract (`schema.graphql`), and the
+Shopify alignment (`shopify-alignment.md`).
 
 ---
 

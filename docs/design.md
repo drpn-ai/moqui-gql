@@ -175,7 +175,7 @@ Shopify services directly.
 
 ### Where it lives
 
-- A **new component `moqui-graphql`**: endpoint, schema registry, analyzer,
+- A **new component `moqui-gql`** (this repo): endpoint, schema registry, analyzer,
   executor, policy, observability.
 - A **small, upstream-able framework addition**: `EntityFind.queryTimeout(seconds)`
   wired to `PreparedStatement.setQueryTimeout()`. Runtime enforcement is
@@ -185,7 +185,7 @@ Shopify services directly.
 
 ### The seven units (each independently testable)
 
-1. **Schema Registry** — reads `graphql/*.graphql.xml` artifacts declaring
+1. **Schema Registry** — reads `graphql/*.gql.xml` artifacts declaring
    types↔entities, fields↔entity-fields, edges↔relationships. **Three field kinds
    (decision 12):** entity-backed (default), view-entity-backed (a type maps to a
    Moqui view-entity for free joins), and service-backed (`resolver-service="..."`
@@ -369,7 +369,7 @@ are our OMS data model** — consumers see Maarg's model, not Shopify's.
 - Concrete default thresholds (max depth, max field count, `first:` cap, cost
   budget per profile, query timeout seconds, row cap) — calibrate with the cost
   tests.
-- Exact `graphql/*.graphql.xml` schema-artifact syntax (incl. `resolver-service` +
+- Exact `graphql/*.gql.xml` schema-artifact syntax (incl. `resolver-service` +
   view-entity type attributes — decision 12).
 - Cursor encoding scheme for Relay connection pagination (now phase 1 — Q4).
 - Per-field allowed-operator declaration syntax + how it generates the filter input types (Q3).

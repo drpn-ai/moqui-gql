@@ -46,10 +46,10 @@ parity would need it. The conventions below are confirmed from the docs.
 
 Shopify filters with a **single search string**: `orders(query: "financial_status:paid created_at:>2026-05-01 name:#1001")`. It's a documented mini-grammar (terms, comparators `>=`/`<=`, connectives AND/OR, modifiers NOT) with a per-type list of searchable fields. It's backed by their **search index**.
 
-We chose (Q1) **DB-backed** and (Q3) **structured, declared, operator-controlled** filters:
-`orders(filter: { statusId: { in: [...] }, placedDate: { between: [...] } })`.
+We had initially specced (Q1) **DB-backed** with a (Q3) **structured, declared filter input**
+(the rejected alternative): `orders(filter: { statusId: { in: [...] }, orderDate: { between: [...] } })`.
 
-**This is a genuine fork.** Three options:
+**This was a genuine fork.** Three options:
 1. **Adopt Shopify's `query:` string** — parse it server-side into DB conditions, **restricted to
    declared fields + operators** (Q3 becomes "which search terms are allowed"). Shopify-identical
    ergonomics, still DB-backed and governed. Cost: build a search-syntax parser; harder to
@@ -92,10 +92,10 @@ Shopify's `id` is an opaque global id `gid://shopify/Order/123`; everything impl
 
 ### D-C — Sorting: `sortKey` enum + `reverse` (adopt)
 
-Shopify: `orders(sortKey: CREATED_AT, reverse: true)` — a curated enum, single key, plus
-`RELEVANCE` when a `query` is present. Ours: `sort: [{field, dir}]` (multi-field).
-**Recommended: adopt `sortKey` enum + `reverse`** (Shopify-identical). Internal cursor tiebreaker
-(PK) stays an implementation detail. Multi-sort is dropped to match (rarely needed). **Low controversy.**
+Shopify: `orders(sortKey: ORDER_DATE, reverse: true)` — a curated enum, single key, plus
+`RELEVANCE` when a `query` is present. The rejected alternative was a `sort: [{field, dir}]` array.
+**RESOLVED: adopt `sortKey` enum + `reverse`** (enum values are our fields, e.g. `ORDER_DATE`).
+Internal cursor tiebreaker (PK) stays an implementation detail; multi-sort dropped to match.
 
 ### D-D — Field naming: **KEEP OUR DATA MODEL** (RESOLVED 2026-06-03)
 
