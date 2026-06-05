@@ -311,14 +311,31 @@ Settled after reverse-engineering the existing Maarg surface (see `requirements.
   existing Solr endpoints; GraphQL does structured DB filtering. (Removes the search-vs-DB fork.)
 - **Q2 — Analytics deferred.** No aggregation (SUM/COUNT/group-by/time-series) in initial scope;
   revisited after user-group usage examples. `oms-bi` facts are the future source.
-- **Q3 — Declare-and-control filtering.** A field is filterable/sortable only if the schema
-  artifact declares it, and the declaration controls *how*: allowed operators per field, value
-  constraints, required index backing, `first:` caps. Arbitrary-field filtering is rejected. This
-  extends the schema layer (decision 5) and is the analyzer's primary control surface.
-- **Q4 — Relay connections in initial scope.** List fields are cursor connections
-  (`edges { node }`, `pageInfo { hasNextPage endCursor }`, `first`/`after`) — not deferred.
-- **Q5 — External-id lookup is a must-have.** First-class `byExternalId` /
-  `byIdentification(type, value)` entry points + an `identifications` edge on core types.
+- **Q3 — Declare-and-control filtering.** Filtering is a Shopify-style `query:` string (D-A);
+  the declaration controls the **grammar**: only declared **search keys** are accepted, each with a
+  declared comparator set, value constraints, and required index backing; `first:` caps apply.
+  Unknown key / disallowed comparator is rejected. Extends the schema layer (decision 5) and is the
+  analyzer's primary control surface.
+- **Q4 — Relay connections in initial scope.** List fields are full cursor connections
+  (`edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`,
+  `first`/`after`/`last`/`before`) — not deferred.
+- **Q5 — External-id lookup is a must-have.** `order(externalId:)` + `orderByIdentifier(identifier:)`
+  + an `identifications` edge on core types.
+
+## Shopify Admin alignment (D-A, D-B — see shopify-alignment.md)
+
+The schema and query language are shaped to Shopify Admin GraphQL so the API is instantly familiar:
+
+- **Filtering — D-A: Shopify `query:` search string** (not a structured filter input). Parsed
+  server-side to DB conditions, governed by the declared search keys/comparators above (Q3).
+- **IDs — D-B: raw entity keys** (single or composite). **No** `gid://` global IDs, `Node`
+  interface, or `node()`/`nodes()`. Lookups via `id`, `externalId`, `orderByIdentifier`.
+- **Sorting:** `sortKey: <Type>SortKeys` enum + `reverse: Boolean` (single key; `RELEVANCE` with a query).
+- **Money:** `MoneyV2 { amount: Decimal!, currencyCode }` / `MoneyBag { shopMoney, presentmentMoney }`, fields named `...Set`.
+- **Scalars:** `DateTime`, `Decimal`. **Status:** curated display enums (`displayFulfillmentStatus`) + raw `status` where useful.
+- **Naming parity** where the concept maps (`createdAt`, `lineItems`, `customer`, `billingAddress`, `totalPriceSet`); OMS-specific fields keep our names (`shipGroups`, `facility`, `picklist`).
+- **Cost envelope** (`extensions.cost`) already identical to Shopify's.
+- We already match the error/connection bones; we deliberately diverge only on global IDs (D-B).
 
 ## Phasing
 

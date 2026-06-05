@@ -64,8 +64,15 @@ We chose (Q1) **DB-backed** and (Q3) **structured, declared, operator-controlled
 
 **Trade at the heart of it:** Shopify-familiarity (option 1) vs AI-agent-friendliness +
 cost-analyzability (option 2). Our top consumer is AI agents, who do *better* with typed inputs —
-so the very thing that makes us Shopify-like makes us slightly worse for our #1 user. This is the
-decision to make consciously. **OPEN.**
+so the very thing that makes us Shopify-like makes us slightly worse for our #1 user.
+
+**RESOLVED (2026-06-03): Option 1 — adopt Shopify's `query:` string DSL.** Filtering uses the
+Shopify search-syntax string. Q3 declare-and-control now governs **the query grammar**: only
+declared **search keys** are accepted, each with a declared comparator set (`:` eq, `:a,b` in,
+`:>`/`:>=`/`:<`/`:<=` and ranges for dates/numbers). Unknown key → `FIELD_NOT_FILTERABLE`;
+disallowed comparator → `OPERATOR_NOT_ALLOWED`. Backed by the DB (Q1), parsed server-side. We
+accept the agent-ergonomics cost and mitigate it by publishing the per-type searchable-field list
+in the schema/SDL so agents can introspect what's allowed.
 
 ### D-B — Global IDs (`gid://`) + `Node` interface
 
@@ -77,8 +84,11 @@ Shopify's `id` is an opaque global id `gid://shopify/Order/123`; everything impl
   PK`; **our composite PKs** (e.g. `OrderItem` = orderId+orderItemSeqId) must encode into one GID
   (Shopify's are single-id — this is a real wrinkle for us).
 - **Keep raw ids:** simpler, our ids are human-meaningful; but un-Shopify and no generic `node()`.
-- **Recommended: adopt GID + `Node`**, expose raw key as `legacyResourceId`, and define a GID
-  scheme that encodes composite PKs. **OPEN.**
+- **RESOLVED (2026-06-03): keep raw entity ids.** No `gid://`, no `Node` interface, no
+  `node`/`nodes`. `id` stays the human-meaningful entity key (single or composite). Simpler, no
+  GID encode/decode, ids are readable in logs/feeds. We forgo Shopify-identical refetch/cache
+  normalization — an accepted divergence. Lookups: `order(id:)`, `order(externalId:)`,
+  `orderByIdentifier(...)`.
 
 ### D-C — Sorting: `sortKey` enum + `reverse` (adopt)
 
@@ -112,9 +122,11 @@ Apply regardless of D-A/D-B (low controversy):
 8. **`orderByIdentifier`** naming for external-id lookup; `node`/`nodes` if D-B adopted.
 9. **Error codes/messages** aligned: `THROTTLED` (rate), max-single-query-cost wording.
 
-Gated on decisions:
-- **D-A** — `query:` string DSL vs structured `filter` (or hybrid).
-- **D-B** — GID + `Node` + `legacyResourceId`, with a composite-PK GID scheme.
+Resolved decisions (now applied across the docs):
+- **D-A → Shopify `query:` string DSL.** Filtering is the Shopify search string; Q3 governs the
+  declared search keys + comparators; DB-backed, parsed server-side.
+- **D-B → keep raw entity ids.** No `gid://`/`Node`/`node()`; `id` is the entity key;
+  `order(id:)`/`order(externalId:)`/`orderByIdentifier`.
 
 ---
 
@@ -149,4 +161,5 @@ remain and they shape the API the most:
 - **D-B global IDs** — adopt `gid://`+`Node` (Shopify-identical, needs a composite-PK GID scheme)
   vs keep raw ids.
 
-Resolve D-A and D-B, and we apply Part 4 across `examples.md` and `design.md`.
+**Both resolved (2026-06-03): `query:` string DSL + raw ids.** Part 4 + these are now applied
+across `examples.md`, `design.md`, and `requirements.md`.

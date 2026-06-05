@@ -62,15 +62,14 @@ Each is evidenced by existing usage.
 2. **Rich filtering:** status, facility, productStore, type/classification, by-identifier,
    multi-value (IN), and **date-range** (entryDate/orderDate/completed/cancelled/approved are
    everywhere). Date-range and status are the most common.
-3. **Declared, operator-controlled filter + multi-sort (Q3 RESOLVED).** Gorjana's
-   `PickProfileCondition` (`fieldName` + `operator` + `value`, FILTER vs SORT_BY) shows clients
-   build UIs that generate filter/sort. We support this but **declare-and-control**: only
-   schema-declared fields are filterable/sortable, each with an allowed operator set, value
-   constraints, and required index backing. Arbitrary-field filtering is rejected — this both
-   serves the use case and bounds the cost analyzer's exposure.
-4. **Relay connections (Q4 RESOLVED — in scope).** `viewIndex`/`viewSize` and the Shopify cursor
-   pattern are pervasive. List fields are cursor connections (`edges { node }`,
-   `pageInfo { hasNextPage endCursor }`, `first`/`after`) from the start.
+3. **Shopify `query:` string filtering, declare-and-controlled (Q3 + D-A RESOLVED).** Filtering is a
+   Shopify-style search string (`query: "status:ORDER_APPROVED created_at:>=2026-05-01"`); only
+   declared **search keys** with declared comparators are honored (unknown key / bad comparator →
+   rejected). Sorting is `sortKey` enum + `reverse`. Gorjana's `PickProfileCondition` use case maps
+   to per-deployment declared search keys (`brand_name`, `is_gift`).
+4. **Relay connections (Q4 RESOLVED — in scope).** Full cursor connections from the start:
+   `edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`,
+   `first`/`after`/`last`/`before`.
 5. **Reads are DB-backed (Q1 RESOLVED).** GraphQL product/order queries are **structured DB
    filters** (category, identification/SKU, productType, status), index-aware. Full-text /
    faceted **Solr search stays on the existing endpoints** — not exposed through GraphQL. No
@@ -132,16 +131,22 @@ nested traversal; external-id lookup; status history; computed fields.
 - **Q2 — Analytics is DEFERRED.** `oms-bi` aggregation stays out for now; we pick it up **after
   we have good usage examples from the user group**. No SUM/COUNT/group-by/time-series in the
   initial scope.
-- **Q3 — Declare-and-control.** Nothing is filterable or sortable unless the schema artifact
-  **declares it**, and the declaration **controls how it may be used**: the permitted operators
-  per field (e.g. `eq`/`in` for an id, `eq`/`range` for a date), value constraints, required
-  index backing, and `first:` caps. Arbitrary-field filtering is rejected. This is the primary
-  control surface and feeds the cost analyzer directly.
-- **Q4 — Relay connections are IN the initial scope.** List fields are cursor-based connections
-  (`edges { node }`, `pageInfo { hasNextPage endCursor }`, `first`/`after`), not bare lists.
-- **Q5 — External-id lookup is a MUST-HAVE (initial scope).** First-class
-  `byExternalId` / `byIdentification(type, value)` entry points, plus an `identifications` edge on
+- **Q3 — Declare-and-control.** Filtering uses a **Shopify `query:` search string** (decision D-A);
+  the declaration controls the **grammar**: only declared **search keys** are accepted, each with a
+  declared comparator set (`:` eq, `:a,b` in, `:>`/`:>=`/`:<`/`:<=` for dates/numbers), value
+  constraints, required index backing, and `first:` caps. Unknown key / disallowed comparator is
+  rejected. Primary control surface; feeds the cost analyzer.
+- **Q4 — Relay connections are IN the initial scope.** Full cursor connections —
+  `edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`,
+  `first`/`after`/`last`/`before` — not bare lists.
+- **Q5 — External-id lookup is a MUST-HAVE (initial scope).** `order(externalId:)` +
+  `orderByIdentifier(identifier:)` (Shopify-parity naming), plus an `identifications` edge on
   the core types.
+
+**Shopify alignment (D-A, D-B — see `shopify-alignment.md`):** the schema/query language is shaped
+to Shopify Admin GraphQL — `query:` string filtering (D-A), **raw entity ids** (D-B, no `gid://`),
+`sortKey`+`reverse`, `MoneyV2`/`MoneyBag`, `DateTime`/`Decimal`, display-status enums, and Shopify
+field names where the concept maps.
 
 ---
 
