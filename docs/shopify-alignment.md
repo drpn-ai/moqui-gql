@@ -27,14 +27,14 @@ parity would need it. The conventions below are confirmed from the docs.
 |---|---|---|---|---|
 | **PageInfo** | `hasNextPage!`, `hasPreviousPage!`, `startCursor`, `endCursor`; edge `cursor!`, `node!` | Relay Cursor Connections | `hasNextPage`, `endCursor` only | **Add `hasPreviousPage` + `startCursor`** (full Relay PageInfo) |
 | **Connection args** | `first, after, last, before` | Relay | `first, after` | **Add `last`/`before`** (backward paging) to match |
-| **Global ID** | `id: ID!` = `gid://shopify/Order/123`; `Node` interface; `node(id)`, `nodes(ids)`; raw id via `legacyResourceId` | Relay Global Object ID | raw `id: "10001"` | **Decision D-B** — adopt GID + `Node` or keep raw |
-| **Filtering** | `query: String` **search-syntax DSL** (`financial_status:paid created_at:>2026-05-01 name:#1001`), documented searchable fields + comparators | (not specified) | structured `filter: { field: { op: val } }` (Q3) | **Decision D-A** — the big one |
-| **Sorting** | `sortKey: <Type>SortKeys` **enum** + `reverse: Boolean` (single key) | (not specified) | `sort: [{ field, dir }]` (multi) | **Decision D-C** — adopt `sortKey`+`reverse` |
-| **Money** | `MoneyV2 { amount: Decimal!, currencyCode: CurrencyCode! }`; `MoneyBag { shopMoney, presentmentMoney }`; fields named `...Set` (e.g. `totalPriceSet`) | custom scalars allowed | `grandTotal: 129.00` + `currency` | **Adopt `MoneyV2`/`MoneyBag`** + `...Set` naming |
-| **Scalars** | `DateTime` (ISO-8601), `Decimal`, `URL`, `HTML`, `UnsignedInt64`, `ID` | custom scalars allowed | ISO string dates, JSON numbers | **Adopt `DateTime`, `Decimal`** custom scalars |
-| **Status fields** | `displayFinancialStatus`, `displayFulfillmentStatus` — curated **enums** | enums | raw `statusId` + computed `fulfillmentStatus` | **Add curated display enums**; keep raw statusId optional |
-| **Field naming** | `createdAt`, `updatedAt`, `name`, `lineItems`, `customer`, `shippingAddress`, `billingAddress`, `tags`, `note`, `email` | camelCase fields | `placedDate`, `items`, `customerName`, `billingAddress`… | **Decision D-D** — adopt Shopify names where concept maps |
-| **External-id query** | `orderByIdentifier(identifier: …)` | — | `order(externalId:)`, `orderByIdentification(type,value)` | **Rename to `orderByIdentifier`** for parity |
+| **Global ID** | `id: ID!` = `gid://shopify/Order/123`; `Node`; `node(id)` | Relay Global Object ID | raw `id` | **D-B RESOLVED — keep raw entity ids** (no GID/Node) |
+| **Filtering** | `query: String` **search-syntax DSL** + comparators | (not specified) | — | **D-A RESOLVED — adopt `query:` string**, our field names as keys, declared keys/comparators (Q3) |
+| **Sorting** | `sortKey: <Type>SortKeys` **enum** + `reverse` (single key) | (not specified) | — | **D-C RESOLVED — adopt `sortKey`+`reverse`** (enum values = our fields) |
+| **Money** | `MoneyBag`/`MoneyV2`, `...Set` naming | custom scalars allowed | `grandTotal` + `currencyUomId` | **KEEP OURS** — our money model, not Shopify's type/naming |
+| **Scalars** | `DateTime`, `Decimal`, `URL`, `HTML`, `ID` | custom scalars allowed | ISO strings, JSON numbers | **Adopt `DateTime`, `Decimal`** (neutral scalar types, not Shopify branding) |
+| **Status fields** | `displayFinancialStatus`, `displayFulfillmentStatus` enums | enums | raw `statusId` + computed `fulfillmentStatus` | **KEEP OURS** — `statusId` + computed `fulfillmentStatus` (our model) |
+| **Field naming** | `createdAt`, `name`, `lineItems`, `customer`, `billingAddress`… | camelCase | `orderDate`, `orderName`, `orderItems`, `customerName`… | **KEEP OURS** (decision: our data model names — D-D = keep) |
+| **External-id query** | `orderByIdentifier(identifier:)` | — | `order(externalId:)`, `orderByIdentification(...)` | **KEEP OURS** — `order(externalId:)` + `orderByIdentification` (our naming) |
 | **Errors / throttle** | `errors[]` + `extensions.code`; throttle code `THROTTLED`; single-query-too-costly → max-cost error | — | `errors[]` + codes (`COST_EXCEEDED`…) | **Match codes/messages** (`THROTTLED`, max-cost wording) |
 | **Cost** | `extensions.cost` (above) | — | identical | ✓ keep |
 
@@ -97,36 +97,36 @@ Shopify: `orders(sortKey: CREATED_AT, reverse: true)` — a curated enum, single
 **Recommended: adopt `sortKey` enum + `reverse`** (Shopify-identical). Internal cursor tiebreaker
 (PK) stays an implementation detail. Multi-sort is dropped to match (rarely needed). **Low controversy.**
 
-### D-D — Field-naming parity (adopt where concept maps)
+### D-D — Field naming: **KEEP OUR DATA MODEL** (RESOLVED 2026-06-03)
 
-Adopt Shopify names where the concept is the same: `createdAt` (←placedDate/entryDate), `lineItems`
-(←items), `customer` object (←customerName scalar; expose `customer { displayName }`),
-`shippingAddress`/`billingAddress`, `tags`, `note`, `email`, `displayFulfillmentStatus`
-(←fulfillmentStatus), `totalPriceSet`/`subtotalPriceSet` (MoneyBag). Keep **OMS-specific** fields
-with our names where Shopify has no equivalent: `shipGroups`, `facility`, `picklist`, brokering,
-transfer orders, cycle counts. **Low controversy** — maximizes familiarity without misrepresenting
-our model.
+**We do NOT rename fields to Shopify's.** Consumers should see Maarg's data model — `orderId`,
+`orderDate`, `statusId`, `grandTotal`/`currencyUomId`, `orderItems`, `orderItemSeqId`, `unitPrice`,
+`fulfillmentStatus`, `shipGroups`, `paymentPreferences`, `facilityName`, etc. We adopt **only the
+Shopify query *language*** (the `query:` search string, `sortKey`+`reverse`, Relay
+connections/cursors, the cost/error envelope), not field/type naming.
+
+Consequently we **do not** adopt: Shopify field names (`createdAt`/`lineItems`/`customer.displayName`),
+`MoneyV2`/`MoneyBag`/`...Set` money structure (we use `grandTotal`+`currencyUomId`), display-status
+enums (`displayFulfillmentStatus` — we keep raw `statusId` + computed `fulfillmentStatus`), or the
+`orderByIdentifier` name (we use `order(externalId:)` + `orderByIdentification`).
 
 ---
 
-## Part 4 — Concrete change list to become Shopify-shaped
+## Part 4 — What we adopt from Shopify (query language only) vs keep ours
 
-Apply regardless of D-A/D-B (low controversy):
-1. **Full Relay PageInfo** — add `hasPreviousPage`, `startCursor`; edges keep `cursor`.
-2. **`last`/`before`** connection args (backward pagination).
-3. **`sortKey: <Type>SortKeys` enum + `reverse: Boolean`** (drop `sort` array) — D-C.
-4. **Money as `MoneyV2`/`MoneyBag`**, fields named `...Set` (`totalPriceSet { shopMoney { amount currencyCode } }`).
-5. **Custom scalars** `DateTime`, `Decimal`.
-6. **Curated display enums** `displayFulfillmentStatus`, `displayFinancialStatus` (+ keep raw `statusId` if useful).
-7. **Shopify field names** where concept maps — D-D.
-8. **`orderByIdentifier`** naming for external-id lookup; `node`/`nodes` if D-B adopted.
-9. **Error codes/messages** aligned: `THROTTLED` (rate), max-single-query-cost wording.
+**Adopt (Shopify query language / protocol):**
+1. **`query:` search-string filtering** (D-A) — our field names as keys, declared keys+comparators (Q3).
+2. **`sortKey: <Type>SortKeys` enum + `reverse: Boolean`** (D-C) — enum values are our fields (e.g. `ORDER_DATE`).
+3. **Full Relay connections** — `edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`, `first/after/last/before`.
+4. **Custom scalars** `DateTime`, `Decimal` (neutral types).
+5. **`extensions.cost` envelope** (already identical) + **error codes/messages** (`THROTTLED`, max-cost wording).
 
-Resolved decisions (now applied across the docs):
-- **D-A → Shopify `query:` string DSL.** Filtering is the Shopify search string; Q3 governs the
-  declared search keys + comparators; DB-backed, parsed server-side.
-- **D-B → keep raw entity ids.** No `gid://`/`Node`/`node()`; `id` is the entity key;
-  `order(id:)`/`order(externalId:)`/`orderByIdentifier`.
+**Keep ours (data model):**
+6. **Field/type names** — our OMS model (`orderId`, `orderDate`, `statusId`, `orderItems`, …) — D-D.
+7. **Money** — `grandTotal` + `currencyUomId` (not `MoneyBag`/`...Set`).
+8. **Status** — raw `statusId` + computed `fulfillmentStatus` (no display enums).
+9. **IDs** — raw entity keys, no `gid://`/`Node`/`node()` (D-B).
+10. **External-id lookup** — `order(externalId:)` + `orderByIdentification(...)` (our naming).
 
 ---
 
@@ -150,16 +150,11 @@ idiomatically in the schema + examples:
 
 ## Headline
 
-We already match Shopify on the **cost envelope and error/connection bones**. To get the rest of
-the way: **adopt full Relay PageInfo, `sortKey`+`reverse`, `MoneyV2`/`MoneyBag`, `DateTime`/`Decimal`,
-display-status enums, and Shopify field names** (all low-controversy — Part 4). Two real decisions
-remain and they shape the API the most:
+**We adopt Shopify's query *language*, not its field names.** Consumers see Maarg's data model
+(`orderId`, `orderDate`, `statusId`, `grandTotal`, `orderItems`, `fulfillmentStatus`); the
+*ergonomics* are Shopify's: `query:` search-string filtering (D-A), `sortKey`+`reverse`, full Relay
+connections + cursors, `DateTime`/`Decimal` scalars, and the `extensions.cost`/error envelope
+(already identical). **IDs stay raw entity keys** (D-B — no `gid://`/`Node`).
 
-- **D-A filtering** — Shopify's `query:` search string (max familiarity) vs structured `filter`
-  (better for AI agents + cost analysis). This trades our #1 consumer's ergonomics against
-  Shopify-sameness.
-- **D-B global IDs** — adopt `gid://`+`Node` (Shopify-identical, needs a composite-PK GID scheme)
-  vs keep raw ids.
-
-**Both resolved (2026-06-03): `query:` string DSL + raw ids.** Part 4 + these are now applied
-across `examples.md`, `design.md`, and `requirements.md`.
+Resolved 2026-06-03: D-A `query:` string · D-B raw ids · D-C `sortKey`+`reverse` · **D-D keep our
+field names**. Applied across `examples.md`, `design.md`, and `requirements.md`.

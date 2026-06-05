@@ -322,20 +322,24 @@ Settled after reverse-engineering the existing Maarg surface (see `requirements.
 - **Q5 — External-id lookup is a must-have.** `order(externalId:)` + `orderByIdentifier(identifier:)`
   + an `identifications` edge on core types.
 
-## Shopify Admin alignment (D-A, D-B — see shopify-alignment.md)
+## Shopify alignment — query LANGUAGE only (D-A…D-D — see shopify-alignment.md)
 
-The schema and query language are shaped to Shopify Admin GraphQL so the API is instantly familiar:
+We adopt Shopify's query *language/ergonomics* so the API feels familiar, but **field/type names
+are our OMS data model** — consumers see Maarg's model, not Shopify's.
 
-- **Filtering — D-A: Shopify `query:` search string** (not a structured filter input). Parsed
-  server-side to DB conditions, governed by the declared search keys/comparators above (Q3).
-- **IDs — D-B: raw entity keys** (single or composite). **No** `gid://` global IDs, `Node`
-  interface, or `node()`/`nodes()`. Lookups via `id`, `externalId`, `orderByIdentifier`.
-- **Sorting:** `sortKey: <Type>SortKeys` enum + `reverse: Boolean` (single key; `RELEVANCE` with a query).
-- **Money:** `MoneyV2 { amount: Decimal!, currencyCode }` / `MoneyBag { shopMoney, presentmentMoney }`, fields named `...Set`.
-- **Scalars:** `DateTime`, `Decimal`. **Status:** curated display enums (`displayFulfillmentStatus`) + raw `status` where useful.
-- **Naming parity** where the concept maps (`createdAt`, `lineItems`, `customer`, `billingAddress`, `totalPriceSet`); OMS-specific fields keep our names (`shipGroups`, `facility`, `picklist`).
-- **Cost envelope** (`extensions.cost`) already identical to Shopify's.
-- We already match the error/connection bones; we deliberately diverge only on global IDs (D-B).
+**Adopt from Shopify (ergonomics):**
+- **Filtering — D-A: `query:` search string** (not a structured filter input), our field names as
+  keys, parsed server-side to DB conditions, governed by declared keys/comparators (Q3).
+- **Sorting:** `sortKey: <Type>SortKeys` enum + `reverse: Boolean` (enum values are our fields, e.g. `ORDER_DATE`).
+- **Relay connections** + cursors: `edges { cursor node }`, full `pageInfo`, `first/after/last/before`.
+- **Scalars** `DateTime`, `Decimal` (neutral). **`extensions.cost`/error envelope** (already identical).
+
+**Keep ours (data model):**
+- **D-D — field/type names are our model:** `orderId`, `orderDate`, `statusId`, `grandTotal`+`currencyUomId`,
+  `orderItems`, `fulfillmentStatus`, `shipGroups`, `paymentPreferences`, `facilityName`, …
+  **No** Shopify field names, **no** `MoneyBag`/`...Set`, **no** display-status enums.
+- **D-B — raw entity ids**, single or composite. No `gid://`, `Node`, or `node()`/`nodes()`.
+  Lookups via `order(id:)`/`order(externalId:)`/`orderByIdentification`.
 
 ## Phasing
 

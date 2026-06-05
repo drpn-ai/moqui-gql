@@ -143,10 +143,12 @@ nested traversal; external-id lookup; status history; computed fields.
   `orderByIdentifier(identifier:)` (Shopify-parity naming), plus an `identifications` edge on
   the core types.
 
-**Shopify alignment (D-A, D-B — see `shopify-alignment.md`):** the schema/query language is shaped
-to Shopify Admin GraphQL — `query:` string filtering (D-A), **raw entity ids** (D-B, no `gid://`),
-`sortKey`+`reverse`, `MoneyV2`/`MoneyBag`, `DateTime`/`Decimal`, display-status enums, and Shopify
-field names where the concept maps.
+**Shopify alignment — query LANGUAGE only (see `shopify-alignment.md`):** we adopt Shopify's query
+*ergonomics* — `query:` string filtering (D-A), `sortKey`+`reverse`, full Relay connections+cursors,
+`DateTime`/`Decimal` scalars, `extensions.cost`/error envelope — but **field/type names stay our OMS
+data model** (D-D: `orderId`, `orderDate`, `grandTotal`+`currencyUomId`, `orderItems`,
+`fulfillmentStatus`, …; no Shopify naming, no `MoneyBag`, no display enums). **Raw entity ids**
+(D-B, no `gid://`/`Node`).
 
 ---
 
