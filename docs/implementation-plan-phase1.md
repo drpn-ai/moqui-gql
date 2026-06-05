@@ -33,8 +33,10 @@ list edges with `DataLoader` and paginating via Relay cursors. Runtime guards (a
   `build.gradle`, `graphql/`, `service/`, `entity/`, `src/`) lives at the repo root alongside
   `docs/`. For build/test it is cloned/symlinked into a Moqui runtime at
   `runtime/component/moqui-gql`. Run the narrow test task only: `./gradlew :runtime:component:moqui-gql:test`.
-- **Framework patch (Task 1)** lands in the `moqui-framework` fork, not this repo. Per project
-  CLAUDE.md: **show a diff before saving** each framework edit.
+- **Framework patch (Task 1)** lands in **`/Users/anilpatel/maarg-sd/notnaked/framework`** — which is
+  the `hotwax/moqui-framework` fork checkout this instance uses (NOT vanilla `maarg-sd/moqui`). Branch
+  + PR to `hotwax/moqui-framework` so all instances inherit it. Per project CLAUDE.md: **show a diff
+  before saving** each framework edit.
 - **Do not run a broad `./gradlew build`.** The verify steps' per-component test task counts as "asked".
 - **Field/type names are our OMS data model** (D-D). **No global IDs / `Node`** (D-B). **DB-backed
   only** (Q1). **No analytics/aggregation** (Q2 deferred). **No full-text/Solr** (stays on existing endpoints).
@@ -45,6 +47,31 @@ list edges with `DataLoader` and paginating via Relay cursors. Runtime guards (a
 - **All P0/P1 fixes from `review-2026-06-03.md` are folded into the tasks below** (cost saturation,
   per-edge `first` cap, service batch-key cap, keyset cursor predicate, `runUseOrBegin`, batch-cardinality
   test, capped clone pool, wall-clock deadline, `@search` in descriptions, new roots R1–R3).
+
+---
+
+## Environment (verified 2026-06-03, machine `/Users/anilpatel/maarg-sd/notnaked`)
+
+- **Instance:** `notnaked` root = `hotwax/moqui-framework` fork; `runtime/` = `hotwax/moqui-runtime`;
+  components are independent repos under `runtime/component/`. Already built + run recently.
+- **JDK 11** on PATH (Temurin 11.0.25; JDK 17 also installed). **graphql-java 25.0 is bytecode major
+  55 = Java 11** → runs on 11; `sourceCompatibility 11` is correct. `java-dataloader 6.0.0` +
+  `reactive-streams` resolved. **Gradle 7.4.1** (wrapper, cached).
+- **Test DB = MySQL `hcsd_notnaked`** (populated — the data we test against), **not** H2. Config lives
+  in the **notnaked component `MoquiConf.xml`** as `entity_ds_*` default-properties: `db_conf=mysql8`,
+  `host=127.0.0.1`, `port=3306`, `user=moqui`, `password=moqui`, `database=hcsd_notnaked` (local dev
+  creds; an env file may override at runtime). The moqui-gql test task (Task 0) forces these via
+  `systemProperty` so tests deterministically hit the populated MySQL regardless of conf merge order.
+- **Verified data (row counts):** OrderHeader 448, OrderItem 1173, OrderItemShipGroup 473, Product
+  3120, Facility 25, Party 106, ReturnHeader 3, **Shipment 0**, 472 tables total.
+  → **Shipment/Return coverage is thin:** the §B0/B1 shipment examples and §C returns must either
+  **seed a fixture** or assert **structure-only** (Task 14 fixtures); orders/items/products/facilities/
+  parties have ample real data.
+- **Patch sites confirmed** in `notnaked/framework` (the fork): `EntityFind.java:250` (after `maxRows`),
+  `EntityFindBase.groovy` field :83 / setter :638, `EntityFindBuilder.java:780` (after `setMaxRows`);
+  `setQueryTimeout` absent → patch needed.
+- **`moqui-gql` not yet cloned** into `runtime/component/` — Task 0 clones `hotwax/moqui-gql` there and
+  scaffolds `component.xml`/`build.gradle` in place; add to `myaddons.xml` for reproducible fetch.
 
 ---
 
@@ -112,6 +139,15 @@ test {
   systemProperty 'moqui.runtime', runtimeDir.absolutePath
   systemProperty 'moqui.conf', 'conf/MoquiDevConf.xml'
   systemProperty 'moqui.init.static', 'true'
+  // Force the populated MySQL `hcsd_notnaked` DB (real order data) instead of the H2 default.
+  // System properties override conf default-property, so this is deterministic regardless of
+  // conf merge order. Values mirror the notnaked component MoquiConf dev defaults (local creds).
+  systemProperty 'entity_ds_db_conf', System.getProperty('entity_ds_db_conf', 'mysql8')
+  systemProperty 'entity_ds_host', System.getProperty('entity_ds_host', '127.0.0.1')
+  systemProperty 'entity_ds_port', System.getProperty('entity_ds_port', '3306')
+  systemProperty 'entity_ds_database', System.getProperty('entity_ds_database', 'hcsd_notnaked')
+  systemProperty 'entity_ds_user', System.getProperty('entity_ds_user', 'moqui')
+  systemProperty 'entity_ds_password', System.getProperty('entity_ds_password', 'moqui')
   classpath += files(sourceSets.main.output.classesDirs) + files(projectDir.absolutePath)
   classpath = classpath.filter { it.exists() }
 }
