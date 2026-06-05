@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
+    <!-- GraphQL query layer governance knobs (calibratable). See docs/design.md + review-2026-06-03.md. -->
+    <default-property name="gql.maxDepth" value="6"/>
+    <default-property name="gql.maxCost" value="1000"/>
+    <default-property name="gql.maxFirst" value="100"/>            <!-- caps EVERY connection + nested edge first/last -->
+    <default-property name="gql.unindexedFilterPenalty" value="50"/>
+    <default-property name="gql.serviceFixedCost" value="25"/>
+    <default-property name="gql.serviceBatchKeyLimit" value="1000"/>
+    <default-property name="gql.maxInventoryKeys" value="500"/>
+    <default-property name="gql.queryTimeoutSeconds" value="20"/>
+    <default-property name="gql.maxRowsPerLevel" value="5000"/>
+    <default-property name="gql.wallClockBudgetMs" value="30000"/>
+    <default-property name="gql.useClone" value="true"/>
+    <!-- ToolFactory that builds + caches the schema at startup is registered in C2. -->
+</moqui-conf>
