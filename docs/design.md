@@ -319,7 +319,7 @@ Settled after reverse-engineering the existing Maarg surface (see `requirements.
 - **Q4 — Relay connections in initial scope.** List fields are full cursor connections
   (`edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`,
   `first`/`after`/`last`/`before`) — not deferred.
-- **Q5 — External-id lookup is a must-have.** `order(externalId:)` + `orderByIdentifier(identifier:)`
+- **Q5 — External-id lookup is a must-have.** `order(externalId:)` + `orderByIdentification(identificationTypeId:, idValue:)`
   + an `identifications` edge on core types.
 
 ## Shopify alignment — query LANGUAGE only (D-A…D-D — see shopify-alignment.md)
@@ -372,7 +372,7 @@ are our OMS data model** — consumers see Maarg's model, not Shopify's.
 - Exact `graphql/*.gql.xml` schema-artifact syntax (incl. `resolver-service` +
   view-entity type attributes — decision 12).
 - Cursor encoding scheme for Relay connection pagination (now phase 1 — Q4).
-- Per-field allowed-operator declaration syntax + how it generates the filter input types (Q3).
+- Per-field allowed search keys + comparators that constrain the `query:` grammar (Q3) — no structured filter input types.
 - External-id / `byIdentification` resolver + `identifications` edge details (Q5).
 - How DataDocument-backed (type B) fields participate in cost estimation.
 - Parent-key → service-input mapping convention for service-backed resolvers, and the

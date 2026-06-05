@@ -7,17 +7,23 @@
 # connections, custom scalars. Read-only. DB-backed (Q1). Raw entity ids — no
 # global IDs / Node (D-B). Analytics deferred (Q2).
 #
-# This SDL is the CONTRACT the test catalog (examples.md) exercises. In the
-# engine it is generated from the per-deployment schema artifacts; entity/field
-# wiring differs per install (HotWax org.apache.ofbiz.* vs vanilla mantle.*).
-# This file covers the Order graph fully and the other domains representatively;
-# both grow with the catalog.
+# CONNECTION-vs-LIST rule (decision G1, hybrid by size): collections you would
+# page are Relay connections (root lists; order line items; ship groups;
+# shipments; returns; return items; picklist items; cycle-count items; products;
+# parties). Small fixed metadata are plain bounded lists (statuses, adjustments,
+# identifications, paymentPreferences, packages, addresses, variants, routing
+# rules/runs, receipts). Every `first:` is capped at maxFirst (=100); nested
+# defaults are <= the cap.
+#
+# This SDL is the CONTRACT the test catalog (examples.md) exercises (plan Task 7
+# asserts the built SDL >= this; Task 14 runs the catalog as tests). Generated
+# from per-deployment schema artifacts; entity wiring differs per install.
 # =============================================================================
 
 # --- Custom scalars ----------------------------------------------------------
 "ISO-8601 timestamp, e.g. 2026-05-14T09:32:00Z."
 scalar DateTime
-"Arbitrary-precision decimal serialized as a string, e.g. \"129.00\"."
+"Arbitrary-precision decimal serialized as a string, e.g. \"129.00\". ALL Decimal values (money AND quantities) serialize as strings."
 scalar Decimal
 
 # --- Directives (governance / declare-and-control, Q3) -----------------------
@@ -25,63 +31,64 @@ scalar Decimal
 Declares the search keys accepted in this connection's `query:` string (Shopify
 search syntax). Comparators per key: `:` (eq), `:a,b` (in), and for date/number
 keys `:>` `:>=` `:<` `:<=`. Only declared keys are honored; unknown key ->
-FIELD_NOT_FILTERABLE, disallowed comparator -> OPERATOR_NOT_ALLOWED.
+FIELD_NOT_FILTERABLE, disallowed comparator -> OPERATOR_NOT_ALLOWED. The same
+keys+comparators are ALSO restated in each connection field's description so
+they are visible via standard introspection (custom directives are not).
 """
 directive @search(keys: [String!]!) on FIELD_DEFINITION
-"Static cost weight hint for the query analyzer (service-backed fields are high/opaque)."
+"Static cost weight hint for the analyzer (service-backed fields are high/opaque)."
 directive @cost(weight: Int!) on FIELD_DEFINITION
-"Marks a field whose value is produced by a Moqui service, not a column (decision 12)."
+"Marks a field whose value is produced by a Moqui service, not a column (decision 12). Auto-assigned serviceFixedCost unless @cost overrides."
 directive @service(name: String!) on FIELD_DEFINITION
 
 # --- Relay pagination --------------------------------------------------------
 "Relay PageInfo (full)."
-type PageInfo {
-  hasNextPage: Boolean!
-  hasPreviousPage: Boolean!
-  startCursor: String
-  endCursor: String
-}
+type PageInfo { hasNextPage: Boolean!  hasPreviousPage: Boolean!  startCursor: String  endCursor: String }
 
 # =============================================================================
 # Query root
 # =============================================================================
 type Query {
   # ---- Order ----
-  "Fetch one order by its raw id, or by host external id."
   order(orderId: ID, externalId: String): Order
-  "Look up an order by a typed identification (e.g. NETSUITE_ORDER, SHOPIFY_ORDER)."
   orderByIdentification(identificationTypeId: String!, idValue: String!): Order
-  "List orders. Filter with the Shopify-style `query:` string over the declared keys."
-  orders(
-    query: String
-    sortKey: OrderSortKey = ORDER_DATE
-    reverse: Boolean = false
-    first: Int, after: String, last: Int, before: String
-  ): OrderConnection!
+  "List orders. `query:` keys: orderId(eq,in) externalId(eq,in) orderName(eq) statusId(eq,in) orderDate(>,>=,<,<=) customerPartyId(eq,in) productStoreId(eq,in)."
+  orders(query: String, sortKey: OrderSortKey = ORDER_DATE, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): OrderConnection!
     @search(keys: ["orderId","externalId","orderName","statusId","orderDate","customerPartyId","productStoreId"])
 
   # ---- Fulfillment ----
   shipment(shipmentId: ID!): Shipment
+  "List shipments. `query:` keys: shipmentId(eq,in) statusId(eq,in) originFacilityId(eq,in) shipmentMethodTypeId(eq,in) shippedDate(>,>=,<,<=)."
+  shipments(query: String, sortKey: ShipmentSortKey = SHIPPED_DATE, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): ShipmentConnection!
+    @search(keys: ["shipmentId","statusId","originFacilityId","shipmentMethodTypeId","shippedDate"])
   picklist(picklistId: ID!): Picklist
-  "BOPIS pickup orders for a facility."
-  pickupOrders(query: String, first: Int, after: String, last: Int, before: String): OrderConnection!
+  "BOPIS pickup orders for a facility. `query:` keys: facilityId(eq,in) statusId(eq,in) orderDate(>,>=,<,<=)."
+  pickupOrders(query: String, sortKey: OrderSortKey = ORDER_DATE, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): OrderConnection!
     @search(keys: ["facilityId","statusId","orderDate"]) @cost(weight: 5)
-  "Ready-to-pick warehouse queue (deployment-specific; e.g. Gorjana adds brandName/isGift keys)."
+  "Ready-to-pick warehouse queue (deployment-specific keys, e.g. Gorjana adds brandName/isGift)."
   readyToPickOrders(query: String, sortKey: OrderSortKey = ORDER_DATE, reverse: Boolean = false,
     first: Int, after: String, last: Int, before: String): ReadyToPickOrderConnection!
     @search(keys: ["facilityId","statusId","shipmentMethodTypeId"]) @cost(weight: 5)
 
   # ---- Returns ----
-  returns(query: String, first: Int, after: String, last: Int, before: String): ReturnConnection!
+  "List returns. `query:` keys: returnId(eq,in) statusId(eq,in) orderId(eq,in) returnDate(>,>=,<,<=)."
+  returns(query: String, sortKey: ReturnSortKey = RETURN_DATE, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): ReturnConnection!
     @search(keys: ["returnId","statusId","orderId","returnDate"])
 
   # ---- Transfers & purchasing ----
-  transferOrders(query: String, first: Int, after: String, last: Int, before: String): TransferOrderConnection!
+  "List transfer orders. `query:` keys: orderId(eq,in) statusId(eq,in) facilityId(eq,in)."
+  transferOrders(query: String, sortKey: OrderSortKey = ORDER_DATE, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): TransferOrderConnection!
     @search(keys: ["orderId","statusId","facilityId"])
   purchaseOrder(orderId: ID!): PurchaseOrder
 
   # ---- Catalog ----
   product(productId: ID, externalId: String): Product
+  "List products. `query:` keys: productId(eq,in) productName(eq) primaryProductCategoryId(eq,in) productTypeId(eq,in)."
   products(query: String, sortKey: ProductSortKey = PRODUCT_NAME, reverse: Boolean = false,
     first: Int, after: String, last: Int, before: String): ProductConnection!
     @search(keys: ["productId","productName","primaryProductCategoryId","productTypeId"])
@@ -90,27 +97,40 @@ type Query {
   facility(facilityId: ID, externalId: String): Facility
   productStore(productStoreId: ID!): ProductStore
 
+  # ---- Party / customer (R2) ----
+  party(partyId: ID, externalId: String): Party
+  "Find parties/customers. `query:` keys: partyId(eq,in) externalId(eq,in) firstName(eq) lastName(eq) emailAddress(eq) roleTypeId(eq,in)."
+  parties(query: String, sortKey: PartySortKey = PARTY_ID, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): PartyConnection!
+    @search(keys: ["partyId","externalId","firstName","lastName","emailAddress","roleTypeId"])
+
   # ---- Inventory / ATP (service-backed) ----
   checkBopisInventory(facilityId: ID!, productId: ID!, quantity: Int!): InventoryCheck @service(name: "get#BopisInventory") @cost(weight: 25)
   productOnlineAtp(productId: ID!, productStoreId: ID!): AtpResult @service(name: "get#ProductOnlineAtp") @cost(weight: 25)
-  facilityInventory(facilityId: ID!, productId: ID!): FacilityInventory @cost(weight: 10)
+  facilityInventory(facilityId: ID!, productId: ID!): InventoryLevel @cost(weight: 10)
+  "Bulk ATP/on-hand for many products across facilities (R3). Capped at maxInventoryKeys product*facility pairs."
+  inventoryLevels(productIds: [ID!]!, facilityIds: [ID!]): [InventoryLevel!]! @service(name: "get#InventoryLevels") @cost(weight: 25)
 
   # ---- Inventory count & routing ----
   cycleCount(inventoryCountImportId: ID!): CycleCount
   orderRoutingGroup(routingGroupId: ID!): OrderRoutingGroup
-
-  # ---- Party ----
-  party(partyId: ID!): Party
 }
 
 # =============================================================================
-# Order graph
+# Sort-key enums (values are OUR fields; no RELEVANCE — DB-backed, no full-text)
 # =============================================================================
-enum OrderSortKey { ORDER_DATE ORDER_NAME GRAND_TOTAL ORDER_ID RELEVANCE }
+enum OrderSortKey { ORDER_DATE ORDER_NAME GRAND_TOTAL ORDER_ID }
+enum ShipmentSortKey { SHIPPED_DATE STATUS SHIPMENT_ID }
+enum ReturnSortKey { RETURN_DATE RETURN_ID STATUS }
+enum ProductSortKey { PRODUCT_NAME PRODUCT_ID }
+enum PartySortKey { PARTY_ID LAST_NAME }
 
 "Computed fulfillment rollup for an order item (decision 12; service-backed)."
 enum FulfillmentStatus { PROCESSING PARTIALLY_COMPLETED COMPLETED CANCELLED RETURNED PARTIALLY_REFUNDED }
 
+# =============================================================================
+# Order graph
+# =============================================================================
 type OrderConnection { edges: [OrderEdge!]!  pageInfo: PageInfo! }
 type OrderEdge { cursor: String!  node: Order! }
 
@@ -125,21 +145,22 @@ type Order {
   productStoreId: ID
   salesChannelEnumId: ID
   customerPartyId: ID
-  "Service-backed: BILL_TO party display name (Person first+last or group)."
-  customerName: String @service(name: "get#OrderCustomerName")
+  "Service-backed: BILL_TO party display name."
+  customerName: String @service(name: "get#OrderCustomerName") @cost(weight: 25)
   billingAddress: PostalAddress
-  identifications(first: Int = 10): [OrderIdentification!]!
+  # connections (paginable)
   orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection! @cost(weight: 2)
   shipGroups(first: Int, after: String, last: Int, before: String): ShipGroupConnection! @cost(weight: 2)
+  returns(first: Int, after: String, last: Int, before: String): ReturnConnection!
+  # plain bounded metadata lists
+  identifications(first: Int = 10): [OrderIdentification!]!
   statuses(first: Int = 50): [OrderStatus!]!
   adjustments(first: Int = 50): [OrderAdjustment!]!
   paymentPreferences(first: Int = 20): [OrderPaymentPreference!]!
-  returns(first: Int, after: String): ReturnConnection!
 }
 
 type OrderItemConnection { edges: [OrderItemEdge!]!  pageInfo: PageInfo! }
 type OrderItemEdge { cursor: String!  node: OrderItem! }
-
 type OrderItem {
   orderId: ID!
   orderItemSeqId: ID!
@@ -162,86 +183,57 @@ type OrderAdjustment { orderAdjustmentId: ID!  orderAdjustmentTypeId: ID!  amoun
 type OrderPaymentPreference { orderPaymentPreferenceId: ID!  paymentMethodTypeId: ID!  maxAmount: Decimal  statusId: ID }
 
 type PostalAddress {
-  contactMechId: ID
-  toName: String
-  address1: String
-  address2: String
-  city: String
-  stateProvinceGeoId: ID
-  postalCode: String
-  countryGeoId: ID
+  contactMechId: ID  toName: String  address1: String  address2: String
+  city: String  stateProvinceGeoId: ID  postalCode: String  countryGeoId: ID
 }
 
-# Ship groups
 type ShipGroupConnection { edges: [ShipGroupEdge!]!  pageInfo: PageInfo! }
 type ShipGroupEdge { cursor: String!  node: ShipGroup! }
 type ShipGroup {
-  shipGroupSeqId: ID!
-  shipmentMethodTypeId: ID
-  carrierPartyId: ID
-  trackingCode: String
-  facilityId: ID
-  facility: Facility
-  picklistId: ID
-  picker: Person
-  orderItems(first: Int = 100): [OrderItem!]!
+  shipGroupSeqId: ID!  shipmentMethodTypeId: ID  carrierPartyId: ID  trackingCode: String
+  facilityId: ID  facility: Facility  picklistId: ID  picker: Person
+  orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection!
 }
 
-# Ready-to-pick (view-backed; deployment-specific extra fields)
 type ReadyToPickOrderConnection { edges: [ReadyToPickOrderEdge!]!  pageInfo: PageInfo! }
 type ReadyToPickOrderEdge { cursor: String!  node: ReadyToPickOrder! }
-type ReadyToPickOrder {
-  orderId: ID!
-  orderName: String
-  netsuiteOrderName: String
-  shipToStateProvinceGeoId: ID
-  facilityId: ID
-}
+type ReadyToPickOrder { orderId: ID!  orderName: String  netsuiteOrderName: String  shipToStateProvinceGeoId: ID  facilityId: ID }
 
 # =============================================================================
 # Fulfillment — Shipment / Picklist
 # =============================================================================
+type ShipmentConnection { edges: [ShipmentEdge!]!  pageInfo: PageInfo! }
+type ShipmentEdge { cursor: String!  node: Shipment! }
 type Shipment {
-  shipmentId: ID!
-  statusId: ID!
-  originFacilityId: ID
-  destinationFacilityId: ID
-  shipmentPackages(first: Int = 50): [ShipmentPackage!]!
+  shipmentId: ID!  statusId: ID!  originFacilityId: ID  destinationFacilityId: ID  shippedDate: DateTime
+  shipmentPackages(first: Int = 50): [ShipmentPackage!]!          # bounded list
   shipmentRouteSegments(first: Int = 10): [ShipmentRouteSegment!]!
 }
-type ShipmentPackage {
-  shipmentPackageSeqId: ID!
-  trackingCode: String
-  labelImageUrl: String
-  shipmentPackageContents(first: Int = 100): [ShipmentPackageContent!]!
-}
+type ShipmentPackage { shipmentPackageSeqId: ID!  trackingCode: String  labelImageUrl: String  shipmentPackageContents(first: Int = 100): [ShipmentPackageContent!]! }
 type ShipmentPackageContent { productId: ID!  quantity: Int }
 type ShipmentRouteSegment { carrierPartyId: ID  shipmentMethodTypeId: ID  trackingIdNumber: String  trackingUrl: String }
 
 type Picklist {
-  picklistId: ID!
-  statusId: ID!
-  picklistDate: DateTime
-  facilityId: ID
-  picklistItems(first: Int = 500): [PicklistItem!]! @cost(weight: 3)
+  picklistId: ID!  statusId: ID!  picklistDate: DateTime  facilityId: ID
+  picklistItems(first: Int, after: String, last: Int, before: String): PicklistItemConnection! @cost(weight: 3)
 }
+type PicklistItemConnection { edges: [PicklistItemEdge!]!  pageInfo: PageInfo! }
+type PicklistItemEdge { cursor: String!  node: PicklistItem! }
 type PicklistItem { orderId: ID  orderName: String  productId: ID  quantity: Int  itemStatusId: ID }
 
 # =============================================================================
 # Returns
 # =============================================================================
-enum ReturnSortKey { RETURN_DATE RETURN_ID STATUS }
 type ReturnConnection { edges: [ReturnEdge!]!  pageInfo: PageInfo! }
 type ReturnEdge { cursor: String!  node: Return! }
 type Return {
-  returnId: ID!
-  statusId: ID!
-  orderId: ID
-  returnDate: DateTime
-  identifications(first: Int = 5): [ReturnIdentification!]!
-  returnItems(first: Int = 100): [ReturnItem!]!
+  returnId: ID!  statusId: ID!  orderId: ID  returnDate: DateTime
+  identifications(first: Int = 5): [ReturnIdentification!]!     # bounded list
+  returnItems(first: Int, after: String, last: Int, before: String): ReturnItemConnection!
 }
 type ReturnIdentification { returnIdentificationTypeId: ID!  idValue: String! }
+type ReturnItemConnection { edges: [ReturnItemEdge!]!  pageInfo: PageInfo! }
+type ReturnItemEdge { cursor: String!  node: ReturnItem! }
 type ReturnItem { returnItemSeqId: ID!  orderId: ID  productId: ID  returnQuantity: Int  refundAmount: Decimal }
 
 # =============================================================================
@@ -250,36 +242,23 @@ type ReturnItem { returnItemSeqId: ID!  orderId: ID  productId: ID  returnQuanti
 type TransferOrderConnection { edges: [TransferOrderEdge!]!  pageInfo: PageInfo! }
 type TransferOrderEdge { cursor: String!  node: TransferOrder! }
 type TransferOrder {
-  orderId: ID!
-  statusId: ID!
-  originFacilityId: ID
-  destinationFacilityId: ID
-  orderItems(first: Int = 100): [OrderItem!]!
-  shipments(first: Int = 10): [Shipment!]!
+  orderId: ID!  statusId: ID!  originFacilityId: ID  destinationFacilityId: ID
+  orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection!
+  shipments(first: Int, after: String, last: Int, before: String): ShipmentConnection!
 }
-type PurchaseOrder {
-  orderId: ID!
-  statusId: ID
-  receipts(first: Int = 100): [ShipmentReceipt!]!
-}
+type PurchaseOrder { orderId: ID!  statusId: ID  receipts(first: Int = 100): [ShipmentReceipt!]! }
 type ShipmentReceipt { shipmentReceiptId: ID!  productId: ID  quantityAccepted: Decimal }
 
 # =============================================================================
 # Catalog
 # =============================================================================
-enum ProductSortKey { PRODUCT_NAME PRODUCT_ID RELEVANCE }
 type ProductConnection { edges: [ProductEdge!]!  pageInfo: PageInfo! }
 type ProductEdge { cursor: String!  node: Product! }
 type Product {
-  productId: ID!
-  productName: String
-  internalName: String
-  productTypeId: ID
-  primaryProductCategoryId: ID
-  isVirtual: Boolean
-  isVariant: Boolean
-  identifications(first: Int = 10): [GoodIdentification!]!
-  variants(first: Int = 50): [Product!]!
+  productId: ID!  productName: String  internalName: String  productTypeId: ID
+  primaryProductCategoryId: ID  isVirtual: Boolean  isVariant: Boolean
+  identifications(first: Int = 10): [GoodIdentification!]!     # bounded list
+  variants(first: Int = 50): [Product!]!                       # bounded list
 }
 type GoodIdentification { goodIdentificationTypeId: ID!  idValue: String! }
 
@@ -287,10 +266,7 @@ type GoodIdentification { goodIdentificationTypeId: ID!  idValue: String! }
 # Facility & store
 # =============================================================================
 type Facility {
-  facilityId: ID!
-  facilityName: String
-  facilityTypeId: ID
-  externalId: String
+  facilityId: ID!  facilityName: String  facilityTypeId: ID  externalId: String
   contactMechs(first: Int = 10): [FacilityContactMech!]!
   locations(first: Int = 50): [FacilityLocation!]!
   carriers(first: Int = 20): [Party!]!
@@ -298,11 +274,7 @@ type Facility {
 }
 type FacilityContactMech { contactMechPurposeTypeId: ID  postalAddress: PostalAddress }
 type FacilityLocation { locationSeqId: ID!  areaId: String  aisleId: String }
-type ProductStore {
-  productStoreId: ID!
-  storeName: String
-  shipmentMethods(first: Int = 20): [ProductStoreShipmentMethod!]!
-}
+type ProductStore { productStoreId: ID!  storeName: String  shipmentMethods(first: Int = 20): [ProductStoreShipmentMethod!]! }
 type ProductStoreShipmentMethod { shipmentMethodTypeId: ID!  carrierPartyId: ID  isTrackingRequired: Boolean }
 
 # =============================================================================
@@ -310,25 +282,24 @@ type ProductStoreShipmentMethod { shipmentMethodTypeId: ID!  carrierPartyId: ID 
 # =============================================================================
 type InventoryCheck { available: Boolean!  atp: Decimal }
 type AtpResult { atp: Decimal }
-type FacilityInventory { quantityOnHandTotal: Decimal  availableToPromiseTotal: Decimal  minimumStock: Decimal }
+type InventoryLevel { productId: ID!  facilityId: ID  quantityOnHandTotal: Decimal  availableToPromiseTotal: Decimal  minimumStock: Decimal }
 
 # =============================================================================
 # Cycle count
 # =============================================================================
 type CycleCount {
-  inventoryCountImportId: ID!
-  statusId: ID!
-  facilityId: ID
-  items(first: Int = 500): [CycleCountItem!]! @cost(weight: 3)
+  inventoryCountImportId: ID!  statusId: ID!  facilityId: ID
+  items(first: Int, after: String, last: Int, before: String): CycleCountItemConnection! @cost(weight: 3)
 }
+type CycleCountItemConnection { edges: [CycleCountItemEdge!]!  pageInfo: PageInfo! }
+type CycleCountItemEdge { cursor: String!  node: CycleCountItem! }
 type CycleCountItem { locationSeqId: ID  productId: ID  quantity: Decimal  varianceQuantityOnHand: Decimal }
 
 # =============================================================================
 # Order routing
 # =============================================================================
 type OrderRoutingGroup {
-  routingGroupId: ID!
-  statusId: ID
+  routingGroupId: ID!  statusId: ID
   routings(first: Int = 20): [OrderRouting!]!
   runs(first: Int = 10): [OrderRoutingRun!]!
 }
@@ -337,14 +308,13 @@ type OrderRoutingRule { fieldName: String  operatorEnumId: ID  fieldValue: Strin
 type OrderRoutingRun { routingRunId: ID!  runStartTime: DateTime  orderCount: Int }
 
 # =============================================================================
-# Party
+# Party / customer
 # =============================================================================
+type PartyConnection { edges: [PartyEdge!]!  pageInfo: PageInfo! }
+type PartyEdge { cursor: String!  node: Party! }
 type Party {
-  partyId: ID!
-  partyTypeEnumId: ID
-  firstName: String
-  lastName: String
-  "Service-backed convenience: orders placed by this party."
+  partyId: ID!  partyTypeEnumId: ID  externalId: String  firstName: String  lastName: String  emailAddress: String
+  "Service-backed convenience: number of orders placed by this party."
   orderCount: Int @service(name: "get#PartyOrderCount") @cost(weight: 25)
 }
 type Person { partyId: ID  firstName: String  lastName: String }

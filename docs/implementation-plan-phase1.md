@@ -38,7 +38,13 @@ list edges with `DataLoader` and paginating via Relay cursors. Runtime guards (a
 - **Do not run a broad `./gradlew build`.** The verify steps' per-component test task counts as "asked".
 - **Field/type names are our OMS data model** (D-D). **No global IDs / `Node`** (D-B). **DB-backed
   only** (Q1). **No analytics/aggregation** (Q2 deferred). **No full-text/Solr** (stays on existing endpoints).
+- **Deployment precondition (review S2):** the GraphQL endpoint MUST NOT be enabled on a shared-DB /
+  multi-tenant instance — cross-client isolation relies on one DB per client (decision 11). The
+  `ScopeFilter` seam (phase-1 no-op) is the hook for phase-2 party/row scoping; T14 asserts it is invoked.
 - Package: `org.moqui.gql`. Commit after every green step.
+- **All P0/P1 fixes from `review-2026-06-03.md` are folded into the tasks below** (cost saturation,
+  per-edge `first` cap, service batch-key cap, keyset cursor predicate, `runUseOrBegin`, batch-cardinality
+  test, capped clone pool, wall-clock deadline, `@search` in descriptions, new roots R1–R3).
 
 ---
 
@@ -115,23 +121,34 @@ test {
 <moqui-conf xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/moqui-conf-3.xsd">
   <default-property name="gql.maxDepth" value="6"/>
   <default-property name="gql.maxCost" value="1000"/>
-  <default-property name="gql.maxFirst" value="100"/>
+  <default-property name="gql.maxFirst" value="100"/>            <!-- caps EVERY connection + nested edge first/last -->
   <default-property name="gql.unindexedFilterPenalty" value="50"/>
   <default-property name="gql.serviceFixedCost" value="25"/>
+  <default-property name="gql.serviceBatchKeyLimit" value="1000"/> <!-- max keys a batched service-backed field may resolve (N6) -->
+  <default-property name="gql.maxInventoryKeys" value="500"/>      <!-- product*facility pairs for bulk ATP -->
   <default-property name="gql.queryTimeoutSeconds" value="20"/>
   <default-property name="gql.maxRowsPerLevel" value="5000"/>
-  <default-property name="gql.wallClockBudgetMs" value="30000"/>
+  <default-property name="gql.wallClockBudgetMs" value="30000"/>  <!-- enforced as a per-request deadline checked between levels (T11) -->
   <default-property name="gql.useClone" value="true"/>
 </moqui-conf>
 ```
+> **Reconciliations from the 2026-06-03 review (`review-2026-06-03.md`):** `maxFirst=100` is enforced
+> per-edge (not just at root) — SDL nested defaults are ≤ 100; cost is accumulated in **`long` with
+> saturation** (no int overflow); service-backed fields in lists are capped by `serviceBatchKeyLimit`;
+> `extensions.cost` is illustrative (engine-computed), `throttleStatus` static in phase 1.
 - [ ] **Step 4 — `MoquiSuite.groovy` + `ScaffoldSmokeTests.groovy`** — boot EC; assert component loaded + `Class.forName("graphql.schema.GraphQLSchema")` resolves (graphql-java 25.0 on classpath).
 - [ ] **Step 5 — Run:** `./gradlew :runtime:component:moqui-gql:test` → PASS.
 - [ ] **Step 6 — Commit** `feat: scaffold moqui-gql component (graphql-java 25.0, test harness)`.
 
-> **Read-replica routing (Q1/decision 9) needs no code** — config only: add a `transactional#clone1`
-> `<datasource>` (read replica) under `<entity-facade>` in the deployment conf (pattern in
-> `MoquiDefaultConf.xml`). The executor calls `.useClone(true)`; dev/test without a replica falls
-> back to the base group automatically.
+> **Read-replica routing (Q1/decision 9) is config, but a CHECKED deliverable** (review A5): ship a
+> sample `transactional#clone1` `<datasource>` (read replica, **capped `pool-max`**) under
+> `<entity-facade>` in the component's conf docs; the executor calls `.useClone(true)`. **At startup,
+> log a WARNING if GraphQL is routing to the base group** (replica not configured → isolation NOT
+> active). Dev/test without a replica falls back to base group (tests pass), but production MUST
+> configure the capped clone pool for decision 9 to hold. Promote a pool-exhaustion smoke test from E2E.
+> **Read-your-writes (review A6):** replica reads are eventually-consistent (bounded by lag); GraphQL
+> is not a read-after-write surface. Document the staleness contract; a trusted caller may pass an
+> internal flag to route to primary when read-after-write is required.
 
 ## Task 1 — Framework patch: `EntityFind.queryTimeout`
 
@@ -197,8 +214,15 @@ declared search key is index-backed and to penalize/forbid unindexed keys.
 
 ## Task 5 — Cost model + `FieldComplexityCalculator`
 
-- [ ] **Step 1 — failing test** (`CostModelTests`): scalar = 1; list edge = `first * (1 + childComplexity)` (fan-out); service-backed field = `serviceFixedCost (25) + childComplexity`; unindexed search key adds penalty.
-- [ ] **Step 2 → FAIL. Step 3 — implement** `CostModel implements graphql.analysis.FieldComplexityCalculator` (`calculate(env, childComplexity)`): list edges multiply by `first` (default `maxFirst`); `serviceBackedFields` set → `serviceFixedCost`; expose `listEdgeByField`, `serviceFixedCost`, `unindexedPenalty` (populated by the builder). **Step 4 → PASS. Step 5 — Commit.**
+- [ ] **Step 1 — failing tests** (`CostModelTests`): scalar = 1; list/connection edge = `first * (1 + childComplexity)` (fan-out); **service-backed field costed per-LEVEL when batched** (not per-row) = `serviceFixedCost`; unindexed-key penalty.
+  - **Saturation test (review C3):** a query whose raw cost exceeds `Integer.MAX_VALUE` with every `first ≤ maxFirst` (many sibling list edges at legal depth) must produce a cost `> maxCost` (clamped), **never a wrapped/negative value that passes the gate**.
+  - **Sibling summation test:** cost at a level **sums** sibling edges AND multiplies down depth (confirm `MaxQueryComplexityInstrumentation` semantics; document the combination).
+- [ ] **Step 2 → FAIL. Step 3 — implement** `CostModel implements graphql.analysis.FieldComplexityCalculator` (`calculate(env, childComplexity)`):
+  - accumulate in **`long` with saturation** (clamp every multiply/add to a ceiling well below `Long`/`Integer.MAX_VALUE`; the instrumentation takes `int` budget so return `(int) Math.min(maxCost*1000L, value)`).
+  - connection/list edges multiply by the requested `first` (or its `maxFirst` default); `serviceBackedFields` → `serviceFixedCost` per level.
+  - expose `listEdgeByField`, `serviceFixedCost`, `unindexedPenalty`, `maxFirst` (populated by the builder).
+  > **Spike before committing (review C2/C3):** verify graphql-java 25.0's int-based complexity can be kept safe via saturation; if not, fall back to a custom pre-execution `long` cost walk. Reconcile every `examples.md` cost number against this formula — `extensions.cost` values in the catalog are **illustrative**, not asserted by Task 14.
+- [ ] **Step 4 → PASS. Step 5 — Commit.**
 
 ## Task 6 — `query:` search-string parser (D-A)
 
@@ -226,8 +250,14 @@ cost model (`listEdgeByField`, `serviceBackedFields`, search-key index flags via
 - [ ] **Step 2 — contract test:** `new SchemaPrinter().print(schema)` ⊇ the types/fields in
   `docs/schema.graphql` (assert key types/args present; this keeps the build and the contract in sync).
 - [ ] **Step 3 → FAIL. Step 4 — implement** `GqlSchemaBuilder.build(artifact) -> BuiltSchema{schema, costModel, artifact}`:
-  generate object types (scalar fields via `type` attr → DateTime/Decimal/String), connection+edge+PageInfo
-  per list edge/root, root Query with the full arg set + sortKey enums, attach directives, populate cost model.
+  generate object types (scalar fields via `type` attr → DateTime/Decimal/String); apply the **hybrid
+  connection rule** (G1) — large/pageable collections → `*Connection`/`*Edge`; small fixed metadata →
+  plain bounded lists with a `first` default ≤ `maxFirst`; root Query with the full arg set + sortKey
+  enums; attach `@search`/`@service`/`@cost`; populate cost model.
+  - **(review G5) Also write the declared search keys + comparators into each connection field's
+    `description`** (not only the `@search` directive) — custom directives are NOT exposed by standard
+    introspection, and the D-A agent-mitigation depends on agents introspecting the allowed grammar.
+    Add a test that an introspection query returns the search-key list in the field description.
 - [ ] **Step 5 → PASS. Step 6 — Commit.**
 
 ## Task 8 — ToolFactory: build + cache at startup
@@ -241,50 +271,61 @@ cost model (`listEdgeByField`, `serviceBackedFields`, search-key index flags via
 The pagination engine: stable cursors, `first/after/last/before`, full `PageInfo`, DataLoader-batched
 edges, single read-only transaction, `.useClone(true)`.
 
-- [ ] **Step 1 — failing tests** (`ConnectionTests`) = the §M cursor walk from `examples.md`:
-  - page 1 (`first:2`) then page 2 (`after: endCursor`): **no overlap, no skip**; `union(pages) == unpaged set`.
+- [ ] **Step 1 — failing tests** (`ConnectionTests`) = the §M cursor walk + the review's edge cases:
+  - page 1 (`first:2`) → page 2 (`after: endCursor`): **no overlap, no skip**; `union(pages) == unpaged set`.
   - `hasNextPage` false on final page; `hasPreviousPage` true on page 2; `startCursor`/`endCursor` correct.
-  - **stability:** sort by `orderDate` with `orderId` PK tiebreaker; inserting a row ahead of the cursor mid-walk does NOT cause a re-seen id.
-  - backward paging (`last`/`before`) mirrors forward.
+  - **stability:** sort by `orderDate` + `orderId` tiebreaker; insert a row ahead of the cursor mid-walk → no re-seen id.
+  - **(review A1) non-unique sort value** spanning a page boundary, and **null sort value** — no skip/overlap.
+  - **(review A2) composite-PK** connection (e.g. nested `orderItems`, PK `orderId+orderItemSeqId`) pages correctly.
+  - backward paging (`last`/`before`) == reverse of forward.
+  - **(review A3) batch-cardinality:** a 3-level nested query issues exactly 3 batch loads (assert via `DataLoaderRegistry` stats); a deliberately direct-find fetcher fails this test (proves no silent N+1).
 - [ ] **Step 2 → FAIL. Step 3 — implement**
-  - `Cursor` — opaque base64 of `(sortKeyValue, pk)`; `encode/decode`.
-  - `ConnectionResolver` — translate `(query, sortKey, reverse, first/after/last/before)` into an
-    `EntityFind` (`orderBy [sortField, pk]`, `WHERE (sortField,pk) > cursor`, `limit first+1` to compute
-    `hasNextPage`), `.useClone(useClone)`, `.queryTimeout(...)`, `.maxRows(maxRowsPerLevel)`; build edges+PageInfo.
-  - `EntityBatchLoader` (DataLoader batch: `WHERE parentKey IN (...)`) for nested list edges; `EntityDataFetcher` wiring.
-  - Run the whole request in `ec.transaction.callUseOrBegin(null, { graphQL.execute(input) })` (decision 10), DataLoader sync dispatch.
+  - `Cursor` — opaque base64 encoding the **full** sort tuple `(sortKeyValue, pk…)` (composite PKs list all PK fields); `encode/decode`.
+  - `ConnectionResolver` — translate `(query, sortKey, reverse, first/after/last/before)` into an `EntityFind`:
+    `orderBy [sortField, pk…]`; **keyset predicate as the OR-form** `sortField > X OR (sortField = X AND pk > Y)` built from nested `EntityCondition` (the tuple form `(a,b)>(x,y)` is NOT expressible in `EntityCondition` and isn't portable — review A1); forbid nullable sort keys (or emulate NULLS-LAST); `limit first+1` for `hasNextPage`; `.useClone(useClone)`, `.queryTimeout(...)`, `.maxRows(maxRowsPerLevel)`.
+  - `EntityBatchLoader` (DataLoader batch) for nested connection edges; resolve the relationship key-map via `EntityDefinition.getRelationshipInfo` (don't assume child FK == parent PK); for composite/multi-column FKs build a bounded `OR` of per-parent `AND` conditions (review A2). Every connection edge resolves via `DataLoader.load`, never a direct find.
+  - Keep the default **`AsyncExecutionStrategy`** (it's what makes per-level batching work in 25.0 — review A3); thread-binding comes from the inline batch loader, not from changing the strategy.
+  - Run the whole request via **`ec.transaction.runUseOrBegin(null, null, { graphQL.execute(input) })`** (review A4 — `callUseOrBegin` does not exist); "read-only" = by-convention + replica (optionally set `Connection.setReadOnly(true)` on the clone).
 - [ ] **Step 4 → PASS. Step 5 — Commit.**
 
-## Task 10 — Resolvers: entity / view-entity / service-backed (decision 12) + external-id (Q5)
+## Task 10 — Resolvers: entity / view-entity / service-backed (decision 12) + external-id (Q5) + new roots (R1–R3)
 
 - [ ] **Step 1 — failing tests** from `examples.md`:
-  - **A1** order detail (entity + edges + billingAddress + service-backed `customerName`/`fulfillmentStatus`).
+  - **A1** order detail (entity + connection edges + billingAddress + service-backed `customerName`/`fulfillmentStatus`).
   - **decision 12:** `fulfillmentStatus` resolves via its service, **batched** across list items; carries `serviceFixedCost`.
-  - **view-entity type:** `ReadyToPickOrder` (B3) resolves from its view-entity; deployment-only search keys (`brandName`,`isGift`).
-  - **Q5:** `order(externalId:)` (J1), `orderByIdentification(...)` (J2), `orders(query:"externalId:a,b")` batch (J3), `facility(externalId:)` (J4); `identifications` edge.
+  - **view-entity type:** `ReadyToPickOrder` (B3) resolves from its view-entity; deployment-only search keys.
+  - **Q5:** `order(externalId:)` (J1), `orderByIdentification(...)` (J2), batch `orders(query:"externalId:a,b")` (J3), `facility(externalId:)` (J4); `identifications` edge.
+  - **R1 — `shipments`** connection (B0); **R2 — `parties`** lookup (J5) + `party(externalId:)`; **R3 — `inventoryLevels`** bulk ATP (E) capped at `maxInventoryKeys`.
 - [ ] **Step 2 → FAIL. Step 3 — implement** `EntityDataFetcher` (scalar), `ServiceBackedFetcher`
-  (DataLoader-batched service call, high fixed cost), `ScopeFilter` (phase-1 no-op seam, decision 11),
-  `ExternalIdResolvers` (`externalId` find + `OrderIdentification` lookup + `identifications` edge).
-  View-entity types need no special path (EntityFind runs on views). Resolve relationship key-maps via
-  `EntityDefinition.getRelationshipInfo` (do **not** assume child FK == parent PK — verify against real mantle/ofbiz relationships; add a test for a differing FK).
+  (DataLoader-batched service call; **hard `serviceBatchKeyLimit` cap** → `BATCH_LIMIT_EXCEEDED` when a
+  batched level would resolve > limit keys — review C4/N6; bar service fields in a list whose batch
+  service can't honor a deadline), `ScopeFilter` (phase-1 no-op seam, decision 11),
+  `ExternalIdResolvers` (`externalId` find + `OrderIdentification` lookup + `identifications` edge),
+  resolvers for `shipments`/`parties`/`inventoryLevels`. View-entity types need no special path
+  (EntityFind runs on views). Resolve relationship key-maps via `EntityDefinition.getRelationshipInfo`
+  (do **not** assume child FK == parent PK; test a differing/composite FK).
 - [ ] **Step 4 → PASS. Step 5 — Commit.**
 
 ## Task 11 — Query governor: gate + runtime guards + structured errors
 
-- [ ] **Step 1 — failing tests** = `examples.md` §N + §Q3b:
-  - depth bomb → `DEPTH_EXCEEDED`; fan-out bomb → `COST_EXCEEDED`; missing `first/last` → `FIRST_REQUIRED`;
-    undeclared key → `FIELD_NOT_FILTERABLE`; disallowed comparator → `OPERATOR_NOT_ALLOWED`.
+- [ ] **Step 1 — failing tests** = `examples.md` §N (N1–N7) + §Q3b — every documented error code:
+  - `DEPTH_EXCEEDED` (N4); `COST_EXCEEDED` (N1, incl. the **saturation** case from T5);
+    `FIRST_REQUIRED` (N3); `FIRST_TOO_LARGE` (N5 — nested edge over `maxFirst`);
+    `FIELD_NOT_FILTERABLE` (N2 undeclared key, **N7 declared-but-unindexed key**);
+    `OPERATOR_NOT_ALLOWED` (Q3b); `BATCH_LIMIT_EXCEEDED` (N6 service-backed under large list).
   - each: `data:null`, structured `extensions.code`, message names the offending key/limit, **nothing hits the DB**.
 - [ ] **Step 2 → FAIL. Step 3 — implement** `QueryGovernor`:
-  - structural/cost gate via `graphql-java` `MaxQueryDepthInstrumentation` + `MaxQueryComplexityInstrumentation(maxCost, costModel)` (decision 8).
-  - query-grammar validation via `SearchQueryParser` (T6) before execution.
-  - runtime guards: per-request `queryTimeout` on every find, row cap (`EntityBatchLoader`/`ConnectionResolver`), wall-clock budget (record elapsed; hard interrupt deferred to phase 2 — note).
-  - `GqlError` → graphql-java `GraphQLError` with stable `extensions.code` (Shopify-style; `THROTTLED` reserved for phase-2 rate budget).
+  - structural/cost gate via `MaxQueryDepthInstrumentation` + `MaxQueryComplexityInstrumentation(maxCost, costModel)` (decision 8) — cost saturated in `long` (T5).
+  - **per-edge `first` cap** (`FIRST_TOO_LARGE`) and **`FIRST_REQUIRED`** on every connection (root AND nested), via validation rules on the parsed AST.
+  - query-grammar validation via `SearchQueryParser` (T6): unknown key / disallowed comparator / **unindexed declared key** (cross-check `IndexClassifier`, T4) → reject.
+  - **service-backed batch-key cap** (`BATCH_LIMIT_EXCEEDED`) before dispatching a batched service level.
+  - runtime guards: per-request `queryTimeout` on every find; row cap; **per-request wall-clock deadline checked between DataLoader levels** (review C6 — a real phase-1 deadline, not just recorded; full thread-interrupt is phase 2). Keep the design claim and the plan aligned on this.
+  - `GqlError` → graphql-java `GraphQLError` with stable `extensions.code`; `THROTTLED` reserved for the phase-2 rate budget.
 - [ ] **Step 4 → PASS. Step 5 — Commit.**
 
 ## Task 12 — `/graphql` endpoint + `extensions.cost`
 
-- [ ] **Steps** — `service/gql/QueryServices.xml` `execute#Query` (in: `query`,`variables`,`operationName`; out: `data`,`errors`,`extensions`) calling `GqlEngine`; `get#Sdl` returns `SchemaPrinter` output. `service/gql.rest.xml` mounts `POST /graphql`. Engine populates `extensions.cost` Shopify-shaped (`requestedQueryCost`,`actualQueryCost`,`throttleStatus{maximumAvailable,currentlyAvailable,restoreRate}`; static in phase 1). TDD via `ec.service.sync()` (examples §A2) asserting `extensions.cost.requestedQueryCost` present. Commit.
+- [ ] **Steps** — `service/gql/QueryServices.xml` `execute#Query` (in: `query`,`variables`,`operationName`; out: `data`,`errors`,`extensions`) calling `GqlEngine`; `get#Sdl` returns `SchemaPrinter` output. `service/gql.rest.xml` mounts `POST /graphql`. Engine populates `extensions.cost` Shopify-shaped; in phase 1 `throttleStatus` is **static** (`currentlyAvailable == maximumAvailable`, `restoreRate` constant) — do NOT emit a fake decrementing bucket (review P2-4); the live leaky bucket is phase 2. TDD asserts the **shape** of `extensions.cost` is present (not specific cost numbers — those are illustrative). Commit.
 
 ## Task 13 — Observability log
 
@@ -294,11 +335,16 @@ edges, single read-only transaction, `.useClone(true)`.
 
 Turn `examples.md` into the executable test suite — this is the payoff of the test-case catalog.
 
-- [ ] **Step 1** — `CatalogContractTests` (+ data fixtures): for each catalog example A–J, L, run the
-  exact query and assert the documented `Output` shape (key fields/edges/pageInfo). `@Unroll` over a table.
-- [ ] **Step 2** — `AdversarialQueryTests` — §N1–N4 + §Q3b all rejected with the exact `extensions.code`.
-- [ ] **Step 3** — `ConnectionWalkTests` — §M property test (no overlap/no skip/same-set + insert-ahead stability).
-- [ ] **Step 4 — run the full suite** `./gradlew :runtime:component:moqui-gql:test` → all PASS. **Commit.**
+- [ ] **Step 1** — `CatalogContractTests` (+ data fixtures): for each catalog example (A1, A2, B0, B1–B4,
+  C, D1, D2, E incl. `inventoryLevels`, F, G, H, I, J1–J5, L1, L2, Q3a) run the exact query and assert the
+  documented `Output` shape (fields/edges/pageInfo). `@Unroll` over a table. Cost numbers are illustrative — assert shape, not values.
+- [ ] **Step 2** — `AdversarialQueryTests` — §N1–N7 + §Q3b all rejected with the exact `extensions.code`
+  (incl. `FIRST_TOO_LARGE` N5, `BATCH_LIMIT_EXCEEDED` N6 service-field-under-list, unindexed-key N7, and the cost-saturation case from T5).
+- [ ] **Step 3** — `ConnectionWalkTests` — §M property test (no overlap/no skip/same-set + insert-ahead
+  stability + non-unique/null sort value + composite-PK + backward paging) and the **batch-cardinality** assertion (T9 review A3).
+- [ ] **Step 4** — `ScopeSeamTests` — assert the `ScopeFilter` hook is invoked on every executed find
+  (phase-1 no-op, but proves the seam is live for phase 2 — review S2). Document the one-DB-per-client precondition.
+- [ ] **Step 5 — run the full suite** `./gradlew :runtime:component:moqui-gql:test` → all PASS. **Commit.**
 
 ---
 

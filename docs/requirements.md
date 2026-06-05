@@ -67,7 +67,7 @@ Each is evidenced by existing usage.
    Shopify-style search string (`query: "status:ORDER_APPROVED created_at:>=2026-05-01"`); only
    declared **search keys** with declared comparators are honored (unknown key / bad comparator →
    rejected). Sorting is `sortKey` enum + `reverse`. Gorjana's `PickProfileCondition` use case maps
-   to per-deployment declared search keys (`brand_name`, `is_gift`).
+   to per-deployment declared search keys (`brandName`, `isGift`).
 4. **Relay connections (Q4 RESOLVED — in scope).** Full cursor connections from the start:
    `edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`,
    `first`/`after`/`last`/`before`.
@@ -90,7 +90,7 @@ Each is evidenced by existing usage.
    per-client field/type visibility. Validates decisions 5 + 11.
 10. **External-ID lookup (Q5 RESOLVED — must-have, in scope).** `OrderHeader.externalId`,
     `Facility.externalId`, and `OrderIdentification` (netsuiteOrderName, shopifyOrderId) drive all
-    multi-system sync. First-class `byExternalId` / `byIdentification(type, value)` entry points +
+    multi-system sync. First-class `order(externalId:)` / `orderByIdentification(identificationTypeId:, idValue:)` entry points +
     an `identifications` edge on core types.
 11. **Status history, not just current status.** OrderStatus/ShipmentStatus/OrderItemChange.
     Expose status-history edges.
@@ -141,7 +141,7 @@ nested traversal; external-id lookup; status history; computed fields.
   `edges { cursor node }`, `pageInfo { hasNextPage hasPreviousPage startCursor endCursor }`,
   `first`/`after`/`last`/`before` — not bare lists.
 - **Q5 — External-id lookup is a MUST-HAVE (initial scope).** `order(externalId:)` +
-  `orderByIdentifier(identifier:)` (Shopify-parity naming), plus an `identifications` edge on
+  `orderByIdentification(identificationTypeId:, idValue:)` (our naming), plus an `identifications` edge on
   the core types.
 
 **Shopify alignment — query LANGUAGE only (see `shopify-alignment.md`):** we adopt Shopify's query

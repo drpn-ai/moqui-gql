@@ -4,64 +4,53 @@
 the test suite. Every example is a `Need → Query → Output` triple.
 
 **Field names are OUR OMS data model** (`orderId`, `orderDate`, `statusId`, `grandTotal`,
-`orderItems`, `fulfillmentStatus`, …) — consumers see Maarg's model, not Shopify's. From **Shopify
-we adopt only the query language**: `query:` search-string filtering, `sortKey`+`reverse` sorting,
-Relay cursor connections, and the cost/error envelope. See `shopify-alignment.md`.
+`orderItems`, `fulfillmentStatus`, …). From **Shopify we adopt only the query language**: `query:`
+search-string filtering, `sortKey`+`reverse`, Relay cursor connections, the cost/error envelope.
 **IDs are raw entity keys** (D-B — no `gid://`/`Node`). DB-backed only (Q1); analytics deferred (Q2).
-
-> Names here are the *contract*. Wire entities differ per deployment (HotWax
-> `org.apache.ofbiz.order.order.*` vs vanilla `mantle.*`); schema artifacts map them.
+Validates against `schema.graphql` (plan Task 7 + Task 14 bind code to this catalog).
 
 ---
 
 ## How to read an example
-- **Need** — the job to be done (and what it takes *today* without this engine, where useful).
-- **Query** — exact GraphQL sent.
-- **Output** — exact JSON returned (or the error, for rejected cases).
-- **Footer** — `maps:` backing entity/view/service · `kind:` `[DB|VIEW|SERVICE]` · `cost:` class · `test:` assertions.
+- **Need / Query / Output** triple; **Footer:** `maps:` · `kind:` `[DB|VIEW|SERVICE]` · `cost:` class · `test:` assertions.
 
-### Conventions (from Shopify's query language; field names are ours)
+### Conventions
 
 1. **Envelope.** Success → `{ "data": {…}, "extensions": {…} }`; error → `{ "errors": [...], "data": null }`. HTTP 200 either way.
-2. **IDs are raw entity keys** (D-B): `orderId: "10001"`, composite like `"10001:00001"` where needed. No global IDs, no `node()`.
-3. **Filtering = `query:` search string** (Shopify syntax, our field names as keys):
-   `query: "statusId:ORDER_APPROVED orderDate:>=2026-05-01"`. Only **declared search keys** are
-   accepted, each with a **declared comparator set** (matrix below). DB-backed (Q1), parsed
-   server-side, governed by Q3.
-4. **Sorting = `sortKey: <Type>SortKeys` enum + `reverse: Boolean`** (single key; enum values are
-   our fields, e.g. `ORDER_DATE`; `RELEVANCE` when a `query` is present).
-5. **Relay connections.** `field(first, after, last, before)` →
-   `{ edges { cursor node { … } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } }`.
-   Nested examples use shorthand `field(first:N){ … }` for the `edges{ node{ … } }` selection; §M
-   shows the full form + cursor walk.
-6. **Money is our model:** `grandTotal` (Decimal) + `currencyUomId`; line `unitPrice` (Decimal).
-   (No `MoneyBag`/`...Set` — that's Shopify naming.)
-7. **Dates:** `DateTime` scalar (ISO-8601). **Statuses:** our raw `statusId`; computed
-   `fulfillmentStatus` (decision 12) where applicable.
-8. **`extensions.cost`** (Shopify-shaped envelope) rides every successful response (shown in A1/A2; assume always present).
-9. **Errors are agent-actionable** — `message` names the offending key/limit; `extensions.code` is stable (`COST_EXCEEDED`, `FIELD_NOT_FILTERABLE`, `OPERATOR_NOT_ALLOWED`, `FIRST_REQUIRED`, `DEPTH_EXCEEDED`, `THROTTLED`).
+2. **IDs are raw entity keys** (D-B): `orderId: "10001"`, composite like `"10001:00001"`. No global IDs / `node()`.
+3. **Connections vs lists (G1, hybrid by size).** *Connections* (select via `edges { node }`; accept
+   `first/after/last/before`): all root lists, and nested **orderItems, shipGroups, returns,
+   returnItems, picklistItems, cycle-count items, transferOrder orderItems/shipments**. *Plain
+   bounded lists* (select fields directly; `first:N` cap, no cursors): **statuses, adjustments,
+   identifications, paymentPreferences, shipment packages/route-segments, facility sub-lists,
+   product variants, routing rules/runs, PO receipts**. (There is no "shorthand" — connections
+   always require `edges/node`.)
+4. **Filtering = `query:` search string** (Shopify syntax, our field names as keys): only declared
+   keys + comparators (the SDL `@search` + field description list them). DB-backed (Q1), governed by Q3.
+5. **Sorting = `sortKey: <Type>SortKey` enum + `reverse: Boolean`** (singular enum names; values are our fields).
+6. **`first` is capped at `maxFirst` (=100)** on every connection AND nested edge; exceeding it is rejected.
+7. **Money & quantities are `Decimal`, serialized as STRINGS** (`"129.00"`, `"7"`). Dates are `DateTime`.
+8. **`extensions.cost` is illustrative**, not an asserted value — the engine computes it. `throttleStatus`
+   is **static in phase 1** (`currentlyAvailable == maximumAvailable`; live leaky bucket is phase 2).
+9. **Errors** carry stable `extensions.code`: `COST_EXCEEDED`, `FIELD_NOT_FILTERABLE`, `OPERATOR_NOT_ALLOWED`, `FIRST_REQUIRED`, `FIRST_TOO_LARGE`, `DEPTH_EXCEEDED`, `BATCH_LIMIT_EXCEEDED`.
 
 ---
 
-## Declared search keys & sort keys (Q3 — declare-and-control over the `query:` grammar)
-
-Shopify-style string, but only **declared keys + comparators** (our field names) are honored.
-Example for the **Order** root (each type declares its own):
+## Declared search keys & sort keys (Q3) — Order root
 
 | Search key | Comparators | Maps to | Index |
 |---|---|---|---|
-| `orderId` | `:` eq, `:a,b` in | OrderHeader.orderId (PK) | PK |
-| `externalId` | `:` eq, `:a,b` in | OrderHeader.externalId | idx |
-| `orderName` | `:` eq | OrderHeader.orderName | idx |
-| `statusId` | `:` eq, `:a,b` in | OrderHeader.statusId | idx |
-| `orderDate` | `:>` `:>=` `:<` `:<=` | OrderHeader.orderDate | idx |
-| `customerPartyId` | `:` eq, `:a,b` in | OrderRole(BILL_TO).partyId | idx |
-| `productStoreId` | `:` eq, `:a,b` in | OrderHeader.productStoreId | idx |
+| `orderId` | eq, in | OrderHeader.orderId (PK) | PK |
+| `externalId` | eq, in | OrderHeader.externalId | idx |
+| `orderName` | eq | OrderHeader.orderName | idx |
+| `statusId` | eq, in | OrderHeader.statusId | idx |
+| `orderDate` | >, >=, <, <= | OrderHeader.orderDate | idx |
+| `customerPartyId` | eq, in | OrderRole(BILL_TO).partyId | idx |
+| `productStoreId` | eq, in | OrderHeader.productStoreId | idx |
 
-**`OrderSortKeys`** (enum, our fields): `ORDER_DATE`, `ORDER_NAME`, `GRAND_TOTAL`, `ORDER_ID`, `RELEVANCE`.
-**Rules (Q3):** unknown key → `FIELD_NOT_FILTERABLE`; comparator not in the key's set (e.g.
-`statusId:>X`) → `OPERATOR_NOT_ALLOWED`. The declared key list is published in the SDL so agents
-can introspect what's allowed.
+`OrderSortKey`: `ORDER_DATE`, `ORDER_NAME`, `GRAND_TOTAL`, `ORDER_ID`. Unknown key →
+`FIELD_NOT_FILTERABLE`; bad comparator (e.g. `statusId:>X`) → `OPERATOR_NOT_ALLOWED`. **Every
+declared key must be index-backed** (a declared-but-unindexed key is rejected at schema build — see §N7 for the query-time guard).
 
 ### Q3a — allowed keys + comparators
 **Need:** "Approved/held ONLINE orders placed in May, newest first."
@@ -72,164 +61,159 @@ query Orders {
     edges { node { orderId orderName statusId orderDate } }
     pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }
 ```
-**Output:**
 ```json
-{ "data": { "orders": {
-  "edges": [
-    { "node": { "orderId": "10042", "orderName": "NN10042", "statusId": "ORDER_APPROVED", "orderDate": "2026-05-28T16:10:00Z" } },
-    { "node": { "orderId": "10039", "orderName": "NN10039", "statusId": "ORDER_HELD",     "orderDate": "2026-05-27T11:02:00Z" } }
-  ],
+{ "data": { "orders": { "edges": [
+  { "node": { "orderId": "10042", "orderName": "NN10042", "statusId": "ORDER_APPROVED", "orderDate": "2026-05-28T16:10:00Z" } },
+  { "node": { "orderId": "10039", "orderName": "NN10039", "statusId": "ORDER_HELD", "orderDate": "2026-05-27T11:02:00Z" } } ],
   "pageInfo": { "hasNextPage": true, "hasPreviousPage": false, "startCursor": "b3JkZXI6MTAwNDI=", "endCursor": "b3JkZXI6MTAwMzk=" } } } }
 ```
-**maps:** OrderHeader, declared+indexed keys · **kind:** `[DB]` · **cost:** cheap · **test:** `in` (comma) + date range honored; sorted desc by orderDate; full PageInfo present.
+**maps:** OrderHeader, declared+indexed keys · **kind:** `[DB]` · **cost:** cheap · **test:** `in`+range honored; desc by orderDate; full PageInfo.
 
-### Q3b — disallowed comparator is rejected
+### Q3b — disallowed comparator → rejected
 ```graphql
 { orders(query: "statusId:>ORDER_APPROVED", first: 5) { edges { node { orderId } } } }
 ```
-**Output:**
 ```json
-{ "errors": [ { "message": "comparator '>' not allowed on search key 'statusId' (allowed: :, in)",
-  "extensions": { "code": "OPERATOR_NOT_ALLOWED", "key": "statusId", "allowed": [":", "in"] } } ], "data": null }
+{ "errors": [ { "message": "comparator '>' not allowed on search key 'statusId' (allowed: eq, in)",
+  "extensions": { "code": "OPERATOR_NOT_ALLOWED", "key": "statusId", "allowed": ["eq","in"] } } ], "data": null }
 ```
-**test:** rejected pre-execution; lists allowed comparators; nothing hits the DB.
 
 ---
 
 ## A. Order
 
 ### A1 — Order detail (CS agent / order screen)
-**Need:** open one order with everything an agent needs. *Today:* `get#SalesOrder` + extra calls; *after:* one query.
+**Need:** open one order with everything an agent needs.
 ```graphql
 query OrderDetail($orderId: ID!) {
   order(orderId: $orderId) {
-    orderName statusId orderDate grandTotal currencyUomId
-    customerPartyId customerName
+    orderName statusId orderDate grandTotal currencyUomId customerPartyId customerName
     billingAddress { address1 city stateProvinceGeoId postalCode countryGeoId }
-    orderItems(first: 50) { orderItemSeqId productId quantity unitPrice statusId fulfillmentStatus promisedDate }
-    shipGroups(first: 10) { shipGroupSeqId shipmentMethodTypeId carrierPartyId trackingCode facility { facilityName } }
-    paymentPreferences(first: 10) { paymentMethodTypeId maxAmount statusId } } }
+    orderItems(first: 50) { edges { node { orderItemSeqId productId quantity unitPrice statusId fulfillmentStatus promisedDate } } }
+    shipGroups(first: 10) { edges { node { shipGroupSeqId shipmentMethodTypeId carrierPartyId trackingCode facility { facilityName } } } }
+    statuses(first: 50) { statusId statusDatetime }
+    paymentPreferences(first: 20) { paymentMethodTypeId maxAmount statusId } } }
 ```
 Variables: `{ "orderId": "10001" }`
-**Output:**
 ```json
 { "data": { "order": {
   "orderName": "NN10001", "statusId": "ORDER_APPROVED", "orderDate": "2026-05-14T09:32:00Z",
-  "grandTotal": "129.00", "currencyUomId": "USD",
-  "customerPartyId": "CUST_88", "customerName": "Jordan Lee",
+  "grandTotal": "129.00", "currencyUomId": "USD", "customerPartyId": "CUST_88", "customerName": "Jordan Lee",
   "billingAddress": { "address1": "123 Main St", "city": "Austin", "stateProvinceGeoId": "USA_TX", "postalCode": "78701", "countryGeoId": "USA" },
-  "orderItems": [
-    { "orderItemSeqId": "00001", "productId": "NN-HOODIE-BLK-M", "quantity": 1, "unitPrice": "89.00", "statusId": "ITEM_APPROVED", "fulfillmentStatus": "PROCESSING", "promisedDate": "2026-05-20T00:00:00Z" },
-    { "orderItemSeqId": "00002", "productId": "NN-SOCK-3PK", "quantity": 2, "unitPrice": "20.00", "statusId": "ITEM_COMPLETED", "fulfillmentStatus": "COMPLETED", "promisedDate": "2026-05-18T00:00:00Z" }
-  ],
-  "shipGroups": [ { "shipGroupSeqId": "00001", "shipmentMethodTypeId": "STANDARD", "carrierPartyId": "USPS", "trackingCode": "9400111899560000000000", "facility": { "facilityName": "Dallas DC" } } ],
+  "orderItems": { "edges": [
+    { "node": { "orderItemSeqId": "00001", "productId": "NN-HOODIE-BLK-M", "quantity": 1, "unitPrice": "89.00", "statusId": "ITEM_APPROVED", "fulfillmentStatus": "PROCESSING", "promisedDate": "2026-05-20T00:00:00Z" } },
+    { "node": { "orderItemSeqId": "00002", "productId": "NN-SOCK-3PK", "quantity": 2, "unitPrice": "20.00", "statusId": "ITEM_COMPLETED", "fulfillmentStatus": "COMPLETED", "promisedDate": "2026-05-18T00:00:00Z" } } ] },
+  "shipGroups": { "edges": [ { "node": { "shipGroupSeqId": "00001", "shipmentMethodTypeId": "STANDARD", "carrierPartyId": "USPS", "trackingCode": "9400111899560000000000", "facility": { "facilityName": "Dallas DC" } } } ] },
+  "statuses": [ { "statusId": "ORDER_CREATED", "statusDatetime": "2026-05-14T09:32:00Z" }, { "statusId": "ORDER_APPROVED", "statusDatetime": "2026-05-14T09:40:00Z" } ],
   "paymentPreferences": [ { "paymentMethodTypeId": "CREDIT_CARD", "maxAmount": "129.00", "statusId": "PMNT_SETTLED" } ] } },
-  "extensions": { "cost": { "requestedQueryCost": 64, "actualQueryCost": 61,
-    "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 939, "restoreRate": 50 } } } }
+  "extensions": { "cost": { "requestedQueryCost": 173, "actualQueryCost": 173,
+    "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 1000, "restoreRate": 50 } } } }
 ```
-**maps:** OrderHeader + `orderItems`/`shipGroups`/`paymentPreferences`; `customerName`+`fulfillmentStatus` service-backed; billingAddress via OrderContactMech→PostalAddress (purpose view) · **kind:** `[DB][VIEW][SERVICE]` · **cost:** moderate · **test:** order resolves; 2 orderItems; `customerName` non-null; `fulfillmentStatus` ∈ enum; `extensions.cost` present.
+**maps:** OrderHeader + connections + plain lists; `customerName`/`fulfillmentStatus` service-backed; billingAddress via OrderContactMech→PostalAddress · **kind:** `[DB][VIEW][SERVICE]` · **cost:** moderate (illustrative) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`; `fulfillmentStatus` ∈ enum.
 
-### A2 — Open-orders queue (ops), first page
+### A2 — Open-orders queue, first page
 ```graphql
 { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2) {
     edges { cursor node { orderId orderName orderDate grandTotal customerName } }
     pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }
 ```
-**Output:**
 ```json
-{ "data": { "orders": {
-  "edges": [
-    { "cursor": "b3JkZXI6MTAwMDE=", "node": { "orderId": "10001", "orderName": "NN10001", "orderDate": "2026-05-14T09:32:00Z", "grandTotal": "129.00", "customerName": "Jordan Lee" } },
-    { "cursor": "b3JkZXI6MTAwMDU=", "node": { "orderId": "10005", "orderName": "NN10005", "orderDate": "2026-05-14T10:05:00Z", "grandTotal": "54.00", "customerName": "Priya Shah" } }
-  ],
-  "pageInfo": { "hasNextPage": true, "hasPreviousPage": false, "startCursor": "b3JkZXI6MTAwMDE=", "endCursor": "b3JkZXI6MTAwMDU=" } } },
-  "extensions": { "cost": { "requestedQueryCost": 12, "actualQueryCost": 12, "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 988, "restoreRate": 50 } } } }
+{ "data": { "orders": { "edges": [
+  { "cursor": "b3JkZXI6MTAwMDE=", "node": { "orderId": "10001", "orderName": "NN10001", "orderDate": "2026-05-14T09:32:00Z", "grandTotal": "129.00", "customerName": "Jordan Lee" } },
+  { "cursor": "b3JkZXI6MTAwMDU=", "node": { "orderId": "10005", "orderName": "NN10005", "orderDate": "2026-05-14T10:05:00Z", "grandTotal": "54.00", "customerName": "Priya Shah" } } ],
+  "pageInfo": { "hasNextPage": true, "hasPreviousPage": false, "startCursor": "b3JkZXI6MTAwMDE=", "endCursor": "b3JkZXI6MTAwMDU=" } } } }
 ```
-**maps:** OrderHeader · **kind:** `[DB]` · **cost:** cheap · **test:** ≤2 edges; all approved; ascending orderDate; `endCursor`==last cursor; `hasNextPage==true`, `hasPreviousPage==false`.
+**kind:** `[DB]` · **cost:** cheap · **test:** ≤2 edges; all approved; ascending orderDate; cursors correct.
 
 ---
 
 ## B. Fulfillment & shipping
 
-### B1 — Shipment with tracking
+### B0 — Shipments queue (NEW, R1)
+**Need:** "shipments shipped today from WH1, by status." *Today:* no such REST shape (by-id only).
+```graphql
+{ shipments(query: "originFacilityId:WH1 statusId:SHIPMENT_SHIPPED shippedDate:>=2026-05-15", sortKey: SHIPPED_DATE, reverse: true, first: 2) {
+    edges { node { shipmentId statusId originFacilityId shippedDate } } pageInfo { hasNextPage endCursor } } }
+```
+```json
+{ "data": { "shipments": { "edges": [
+  { "node": { "shipmentId": "SH900", "statusId": "SHIPMENT_SHIPPED", "originFacilityId": "WH1", "shippedDate": "2026-05-15T18:20:00Z" } } ],
+  "pageInfo": { "hasNextPage": false, "endCursor": "c2hpcDpTSDkwMA==" } } } }
+```
+**maps:** Shipment, declared keys · **kind:** `[DB]` · **cost:** cheap · **test:** facility+status+date filter; sorted desc.
+
+### B1 — Shipment detail with tracking
 ```graphql
 { shipment(shipmentId: "SH900") { statusId originFacilityId
-    shipmentPackages(first: 20) { shipmentPackageSeqId trackingCode labelImageUrl
-      shipmentPackageContents(first: 50) { productId quantity } }
+    shipmentPackages(first: 20) { shipmentPackageSeqId trackingCode labelImageUrl shipmentPackageContents(first: 50) { productId quantity } }
     shipmentRouteSegments(first: 5) { carrierPartyId trackingIdNumber trackingUrl } } }
 ```
-**Output:**
 ```json
-{ "data": { "shipment": {
-  "statusId": "SHIPMENT_SHIPPED", "originFacilityId": "WH1",
+{ "data": { "shipment": { "statusId": "SHIPMENT_SHIPPED", "originFacilityId": "WH1",
   "shipmentPackages": [ { "shipmentPackageSeqId": "00001", "trackingCode": "9400111899560000000000", "labelImageUrl": "https://cdn.example/labels/SH900-1.png",
     "shipmentPackageContents": [ { "productId": "NN-HOODIE-BLK-M", "quantity": 1 } ] } ],
   "shipmentRouteSegments": [ { "carrierPartyId": "USPS", "trackingIdNumber": "9400111899560000000000", "trackingUrl": "https://tools.usps.com/go/TrackConfirmAction?tLabels=9400111899560000000000" } ] } } }
 ```
-**maps:** Shipment → ShipmentPackage → ShipmentPackageContent; ShipmentRouteSegment (tracking) · **kind:** `[DB][VIEW]` · **cost:** moderate · **test:** packages nest contents; tracking present when shipped. *(No AfterShip object — tracking is on the route segment.)*
+**kind:** `[DB][VIEW]` · **cost:** moderate · **test:** packages/route-segments are plain lists (direct selection); tracking present when shipped.
 
 ### B2 — BOPIS pickup queue
 ```graphql
 { pickupOrders(query: "facilityId:STORE_07", first: 25) {
     edges { node { orderId orderName customerName
-      shipGroups(first: 5) { picklistId picker { firstName lastName } orderItems(first: 50) { productId quantity } } } }
+      shipGroups(first: 5) { edges { node { picklistId picker { firstName lastName } orderItems(first: 50) { edges { node { productId quantity } } } } } } } }
     pageInfo { hasNextPage endCursor } } }
 ```
-**Output:**
 ```json
 { "data": { "pickupOrders": { "edges": [ { "node": {
   "orderId": "10077", "orderName": "NN10077", "customerName": "Sam Rivera",
-  "shipGroups": [ { "picklistId": "PICK55", "picker": { "firstName": "Dana", "lastName": "Cole" },
-    "orderItems": [ { "productId": "NN-TEE-WHT-L", "quantity": 1 } ] } ] } } ],
+  "shipGroups": { "edges": [ { "node": { "picklistId": "PICK55", "picker": { "firstName": "Dana", "lastName": "Cole" },
+    "orderItems": { "edges": [ { "node": { "productId": "NN-TEE-WHT-L", "quantity": 1 } } ] } } } ] } } } ],
   "pageInfo": { "hasNextPage": false, "endCursor": "b3JkZXI6MTAwNzc=" } } } }
 ```
-**maps:** `get#PickupOrders` / `OrderHeaderShipGroupShipment` + `PicklistShipmentAndRole` views · **kind:** `[VIEW][SERVICE]` · **cost:** moderate · **test:** only STORE_07; picker present when assigned.
+**kind:** `[VIEW][SERVICE]` · **cost:** moderate · **test:** nested connections (`shipGroups`, `orderItems`) selected via `edges/node`.
 
-### B3 — Ready-to-pick warehouse queue (Gorjana) — deployment-specific declared keys
+### B3 — Ready-to-pick warehouse queue (Gorjana) — deployment-specific keys
 ```graphql
 { readyToPickOrders(query: "facilityId:WH1 brandName:Fine isGift:true", sortKey: ORDER_DATE, reverse: true, first: 2) {
-    edges { node { orderId orderName netsuiteOrderName shipToStateProvinceGeoId } }
-    pageInfo { hasNextPage endCursor } } }
+    edges { node { orderId orderName netsuiteOrderName shipToStateProvinceGeoId } } pageInfo { hasNextPage endCursor } } }
 ```
-**Output:**
 ```json
 { "data": { "readyToPickOrders": { "edges": [
-  { "node": { "orderId": "10088", "orderName": "NN10088", "netsuiteOrderName": "SO20088", "shipToStateProvinceGeoId": "USA_CA" } },
-  { "node": { "orderId": "10081", "orderName": "NN10081", "netsuiteOrderName": "SO20081", "shipToStateProvinceGeoId": "USA_NY" } } ],
-  "pageInfo": { "hasNextPage": false, "endCursor": "b3JkZXI6MTAwODE=" } } } }
+  { "node": { "orderId": "10088", "orderName": "NN10088", "netsuiteOrderName": "SO20088", "shipToStateProvinceGeoId": "USA_CA" } } ],
+  "pageInfo": { "hasNextPage": false, "endCursor": "b3JkZXI6MTAwODg=" } } } }
 ```
-**maps:** `ReadyToPickWarehouseOrder` view; custom `brandName`/`isGift` keys; `netsuiteOrderName` via OrderIdentification · **kind:** `[VIEW]` · **cost:** moderate · **test:** `brandName`/`isGift` honored only in Gorjana schema; undeclared elsewhere → `FIELD_NOT_FILTERABLE`.
+**kind:** `[VIEW]` · **test:** `brandName`/`isGift` keys honored only in the Gorjana schema; undeclared elsewhere → `FIELD_NOT_FILTERABLE`.
 
 ### B4 — Picklist with items
 ```graphql
 { picklist(picklistId: "PICK55") { statusId picklistDate
-    picklistItems(first: 200) { orderName productId quantity itemStatusId } } }
+    picklistItems(first: 100) { edges { node { orderName productId quantity itemStatusId } } pageInfo { hasNextPage endCursor } } } }
 ```
-**Output:**
 ```json
 { "data": { "picklist": { "statusId": "PICKLIST_PICKING", "picklistDate": "2026-05-15T08:00:00Z",
-  "picklistItems": [ { "orderName": "NN10077", "productId": "NN-TEE-WHT-L", "quantity": 1, "itemStatusId": "ITEM_APPROVED" } ] } } }
+  "picklistItems": { "edges": [ { "node": { "orderName": "NN10077", "productId": "NN-TEE-WHT-L", "quantity": 1, "itemStatusId": "ITEM_APPROVED" } } ],
+  "pageInfo": { "hasNextPage": true, "endCursor": "cGk6UElDSzU1OjAwMDAx" } } } } }
 ```
-**maps:** `PicklistItemView` · **kind:** `[VIEW]` · **cost:** moderate · **test:** items belong to PICK55.
+**kind:** `[VIEW]` · **cost:** moderate · **test:** `picklistItems` is a connection (`first ≤ 100`).
 
 ---
 
 ## C. Returns
 ```graphql
-{ returns(query: "statusId:RETURN_REQUESTED", first: 1) {
-    edges { node { returnId statusId identifications(first: 5) { returnIdentificationTypeId idValue }
-      returnItems(first: 100) { orderId productId returnQuantity refundAmount } } }
+{ returns(query: "statusId:RETURN_REQUESTED", sortKey: RETURN_DATE, reverse: true, first: 1) {
+    edges { node { returnId statusId
+      identifications(first: 5) { returnIdentificationTypeId idValue }
+      returnItems(first: 100) { edges { node { orderId productId returnQuantity refundAmount } } } } }
     pageInfo { hasNextPage endCursor } } }
 ```
-**Output:**
 ```json
 { "data": { "returns": { "edges": [ { "node": {
   "returnId": "RT5001", "statusId": "RETURN_REQUESTED",
   "identifications": [ { "returnIdentificationTypeId": "AFTERSHIP_RTN_ID", "idValue": "AS-99812" } ],
-  "returnItems": [ { "orderId": "10001", "productId": "NN-SOCK-3PK", "returnQuantity": 1, "refundAmount": "20.00" } ] } } ],
+  "returnItems": { "edges": [ { "node": { "orderId": "10001", "productId": "NN-SOCK-3PK", "returnQuantity": 1, "refundAmount": "20.00" } } ] } } } ],
   "pageInfo": { "hasNextPage": true, "endCursor": "cmV0dXJuOlJUNTAwMQ==" } } } }
 ```
-**maps:** ReturnHeader → returnItems, identifications · **kind:** `[DB]` · **cost:** moderate · **test:** only RETURN_REQUESTED; external ids exposed; refundAmount Decimal.
+**kind:** `[DB]` · **test:** `returnItems` is a connection; `identifications` a plain list; refundAmount string.
 
 ---
 
@@ -237,19 +221,20 @@ Variables: `{ "orderId": "10001" }`
 ```graphql
 # D1 — transfers awaiting approval
 { transferOrders(query: "statusId:ORDER_CREATED facilityId:WH1", first: 1) {
-    edges { node { orderId orderItems(first: 100) { productId quantity } shipments(first: 10) { shipmentId statusId } } }
+    edges { node { orderId
+      orderItems(first: 100) { edges { node { productId quantity } } }
+      shipments(first: 10) { edges { node { shipmentId statusId } } } } }
     pageInfo { hasNextPage endCursor } } }
-# D2 — PO receipts
+# D2 — PO receipts (plain list)
 { purchaseOrder(orderId: "PO77") { orderId receipts(first: 100) { shipmentReceiptId productId quantityAccepted } } }
 ```
-**Output (D1):**
 ```json
 { "data": { "transferOrders": { "edges": [ { "node": { "orderId": "TO3001",
-  "orderItems": [ { "productId": "NN-HOODIE-BLK-M", "quantity": 12 } ],
-  "shipments": [ { "shipmentId": "TS7001", "statusId": "SHIPMENT_INPUT" } ] } } ],
+  "orderItems": { "edges": [ { "node": { "productId": "NN-HOODIE-BLK-M", "quantity": 12 } } ] },
+  "shipments": { "edges": [ { "node": { "shipmentId": "TS7001", "statusId": "SHIPMENT_INPUT" } } ] } } } ],
   "pageInfo": { "hasNextPage": false, "endCursor": "dG86VE8zMDAx" } } } }
 ```
-**maps:** TransferOrder views; PurchaseOrder→ShipmentReceipt · **kind:** `[VIEW][DB]` · **cost:** moderate/cheap · **test:** status+facility query filters; receipts belong to PO77.
+**kind:** `[VIEW][DB]` · **test:** transferOrder `orderItems`/`shipments` are connections; PO `receipts` a plain list; `quantityAccepted` string.
 
 ---
 
@@ -257,34 +242,39 @@ Variables: `{ "orderId": "10001" }`
 ```graphql
 { checkBopisInventory(facilityId: "STORE_07", productId: "NN-TEE-WHT-L", quantity: 2) { available atp }
   productOnlineAtp(productId: "NN-TEE-WHT-L", productStoreId: "ONLINE") { atp }
-  facilityInventory(facilityId: "WH1", productId: "NN-TEE-WHT-L") { quantityOnHandTotal availableToPromiseTotal minimumStock } }
+  facilityInventory(facilityId: "WH1", productId: "NN-TEE-WHT-L") { quantityOnHandTotal availableToPromiseTotal minimumStock }
+  # bulk ATP (R3): many SKUs across facilities in one call
+  inventoryLevels(productIds: ["NN-TEE-WHT-L","NN-HOODIE-BLK-M"], facilityIds: ["WH1","STORE_07"]) {
+    productId facilityId availableToPromiseTotal } }
 ```
-**Output:**
 ```json
-{ "data": { "checkBopisInventory": { "available": true, "atp": 7 },
-  "productOnlineAtp": { "atp": 142 },
-  "facilityInventory": { "quantityOnHandTotal": 160, "availableToPromiseTotal": 142, "minimumStock": 18 } } }
+{ "data": {
+  "checkBopisInventory": { "available": true, "atp": "7" },
+  "productOnlineAtp": { "atp": "142" },
+  "facilityInventory": { "quantityOnHandTotal": "160", "availableToPromiseTotal": "142", "minimumStock": "18" },
+  "inventoryLevels": [
+    { "productId": "NN-TEE-WHT-L", "facilityId": "WH1", "availableToPromiseTotal": "142" },
+    { "productId": "NN-TEE-WHT-L", "facilityId": "STORE_07", "availableToPromiseTotal": "7" },
+    { "productId": "NN-HOODIE-BLK-M", "facilityId": "WH1", "availableToPromiseTotal": "33" },
+    { "productId": "NN-HOODIE-BLK-M", "facilityId": "STORE_07", "availableToPromiseTotal": "0" } ] } }
 ```
-**maps:** `get#BopisInventory`, `get#ProductOnlineAtp` (service); `ProductFacilityView` (view) · **kind:** `[SERVICE][VIEW]` · **cost:** high (service-backed → fixed high cost) · **test:** `available` boolean; `atp` numeric; service fields carry high fixed cost.
+**maps:** `get#BopisInventory`/`get#ProductOnlineAtp`/`get#InventoryLevels` (service); `ProductFacilityView` (view) · **kind:** `[SERVICE][VIEW]` · **cost:** high (service-backed fixed cost) · **test:** Decimal as strings; `inventoryLevels` capped at `maxInventoryKeys` product×facility pairs (→ `BATCH_LIMIT_EXCEEDED` beyond it).
 
 ---
 
-## F. Catalog (DB-backed query — Q1: DB only; full-text stays on Solr)
+## F. Catalog (DB-backed; full-text stays on Solr — Q1)
 ```graphql
 { products(query: "primaryProductCategoryId:TOPS productTypeId:FINISHED_GOOD", sortKey: PRODUCT_NAME, first: 2) {
     edges { node { productId productName identifications(first: 5) { goodIdentificationTypeId idValue } } }
     pageInfo { hasNextPage endCursor } } }
 ```
-**Output:**
 ```json
 { "data": { "products": { "edges": [
   { "node": { "productId": "NN-HOODIE-BLK-M", "productName": "Black Hoodie / M",
-      "identifications": [ { "goodIdentificationTypeId": "SKU", "idValue": "NN-HOODIE-BLK-M" }, { "goodIdentificationTypeId": "UPCA", "idValue": "0810000000019" } ] } },
-  { "node": { "productId": "NN-TEE-WHT-L", "productName": "White Tee / L",
-      "identifications": [ { "goodIdentificationTypeId": "SKU", "idValue": "NN-TEE-WHT-L" } ] } } ],
-  "pageInfo": { "hasNextPage": true, "endCursor": "cHJvZHVjdDpOTi1URUUtV0hULUw=" } } } }
+      "identifications": [ { "goodIdentificationTypeId": "SKU", "idValue": "NN-HOODIE-BLK-M" }, { "goodIdentificationTypeId": "UPCA", "idValue": "0810000000019" } ] } } ],
+  "pageInfo": { "hasNextPage": true, "endCursor": "cHJvZHVjdDpOTi1IT09ESUUtQkxLLU0=" } } } }
 ```
-**maps:** Product + GoodIdentification, declared keys · **kind:** `[DB]` · **cost:** cheap · **test:** category/type keys filter; SKU resolvable via identifications. *Keyword/faceted full-text search is NOT exposed via GraphQL — it stays on existing Solr endpoints.*
+**kind:** `[DB]` · **cost:** cheap · **test:** category/type keys; SKU via identifications (plain list). Keyword full-text NOT here (Solr).
 
 ---
 
@@ -292,28 +282,31 @@ Variables: `{ "orderId": "10001" }`
 ```graphql
 { facility(facilityId: "WH1") { facilityName facilityTypeId
     contactMechs(first: 5) { contactMechPurposeTypeId postalAddress { city stateProvinceGeoId } }
-    locations(first: 50) { locationSeqId } carriers(first: 20) { partyId } productStores(first: 10) { productStoreId } }
+    carriers(first: 20) { partyId } productStores(first: 10) { productStoreId } }
   productStore(productStoreId: "ONLINE") { shipmentMethods(first: 20) { shipmentMethodTypeId carrierPartyId } } }
 ```
-**Output:**
 ```json
 { "data": {
   "facility": { "facilityName": "Dallas DC", "facilityTypeId": "WAREHOUSE",
     "contactMechs": [ { "contactMechPurposeTypeId": "PRIMARY_LOCATION", "postalAddress": { "city": "Dallas", "stateProvinceGeoId": "USA_TX" } } ],
-    "locations": [ { "locationSeqId": "A-01-01" } ], "carriers": [ { "partyId": "USPS" } ], "productStores": [ { "productStoreId": "ONLINE" } ] },
+    "carriers": [ { "partyId": "USPS" } ], "productStores": [ { "productStoreId": "ONLINE" } ] },
   "productStore": { "shipmentMethods": [ { "shipmentMethodTypeId": "STANDARD", "carrierPartyId": "USPS" } ] } } }
 ```
-**maps:** Facility (+ FacilityContactDetailByPurpose, FacilityCarrier views); ProductStore + ProductStoreShipmentMethod · **kind:** `[DB][VIEW]` · **cost:** moderate · **test:** contactMechs via purpose view; carriers via FacilityParty(role=CARRIER).
+**kind:** `[DB][VIEW]` · **test:** contactMechs via purpose view; all plain lists.
 
 ---
 
 ## H. Cycle count
 ```graphql
 { cycleCount(inventoryCountImportId: "CC1") { statusId facilityId
-    items(first: 500) { locationSeqId productId quantity varianceQuantityOnHand } } }
+    items(first: 100) { edges { node { locationSeqId productId quantity varianceQuantityOnHand } } pageInfo { hasNextPage endCursor } } } }
 ```
-**Output:** `{ "data": { "cycleCount": { "statusId": "INV_COUNT_COMPLETED", "facilityId": "WH1", "items": [ { "locationSeqId": "A-01-01", "productId": "NN-HOODIE-BLK-M", "quantity": 98, "varianceQuantityOnHand": -2 } ] } } }`
-**maps:** InventoryCountImport → InventoryCountImportItem · **kind:** `[DB]` · **cost:** moderate (watch row cap) · **test:** items ≤ row cap; variance computed.
+```json
+{ "data": { "cycleCount": { "statusId": "INV_COUNT_COMPLETED", "facilityId": "WH1",
+  "items": { "edges": [ { "node": { "locationSeqId": "A-01-01", "productId": "NN-HOODIE-BLK-M", "quantity": "98", "varianceQuantityOnHand": "-2" } } ],
+  "pageInfo": { "hasNextPage": true, "endCursor": "Y2M6Q0MxOkEtMDEtMDE=" } } } } }
+```
+**kind:** `[DB]` · **cost:** moderate · **test:** `items` is a connection (`first ≤ 100`); Decimal as strings.
 
 ---
 
@@ -323,39 +316,44 @@ Variables: `{ "orderId": "10001" }`
     routings(first: 20) { orderRoutingId rules(first: 50) { fieldName operatorEnumId fieldValue } }
     runs(first: 10) { routingRunId runStartTime orderCount } } }
 ```
-**Output:** `{ "data": { "orderRoutingGroup": { "statusId": "ROUTING_ACTIVE", "routings": [ { "orderRoutingId": "OR1", "rules": [ { "fieldName": "facilityId", "operatorEnumId": "EQUALS", "fieldValue": "WH1" } ] } ], "runs": [ { "routingRunId": "RUN9001", "runStartTime": "2026-05-15T02:00:00Z", "orderCount": 312 } ] } } }`
-**maps:** OrderRoutingGroup → OrderRouting → OrderRoutingRule + runs · **kind:** `[DB][VIEW]` · **cost:** moderate · **test:** rules nest; runs ordered by time.
+```json
+{ "data": { "orderRoutingGroup": { "statusId": "ROUTING_ACTIVE",
+  "routings": [ { "orderRoutingId": "OR1", "rules": [ { "fieldName": "facilityId", "operatorEnumId": "EQUALS", "fieldValue": "WH1" } ] } ],
+  "runs": [ { "routingRunId": "RUN9001", "runStartTime": "2026-05-15T02:00:00Z", "orderCount": 312 } ] } } }
+```
+**kind:** `[DB][VIEW]` · **test:** routings/rules/runs are plain lists.
 
 ---
 
-## J. External-ID lookup (Q5 — must-have)
+## J. External-ID & party lookup (Q5 + R2)
 ```graphql
-# J1 — by host external id (direct arg)
+# J1 — order by host external id
 { order(externalId: "shopify:4567890") { orderId orderName statusId } }
-# J2 — by typed identification
+# J2 — order by typed identification
 { orderByIdentification(identificationTypeId: "NETSUITE_ORDER", idValue: "SO12345") {
     orderId orderName identifications(first: 5) { orderIdentificationTypeId idValue } } }
-# J3 — batch resolve many host ids via query string (sync reconciliation)
+# J3 — batch resolve many host ids (sync reconciliation)
 { orders(query: "externalId:shopify:4567890,shopify:4567999", first: 100) {
     edges { node { orderId externalId statusId } } pageInfo { hasNextPage endCursor } } }
 # J4 — facility by external id
 { facility(externalId: "wms:DC-DALLAS") { facilityId facilityName facilityTypeId } }
+# J5 — customer/party lookup (NEW, R2): resolve a customer, then their orders
+{ parties(query: "lastName:Lee emailAddress:jordan@example.com", first: 5) {
+    edges { node { partyId firstName lastName emailAddress orderCount } } pageInfo { hasNextPage endCursor } } }
 ```
-**Output (J2):**
 ```json
-{ "data": { "orderByIdentification": { "orderId": "10001", "orderName": "NN10001",
-  "identifications": [ { "orderIdentificationTypeId": "NETSUITE_ORDER", "idValue": "SO12345" }, { "orderIdentificationTypeId": "SHOPIFY_ORDER", "idValue": "4567890" } ] } } }
+{ "data": { "parties": { "edges": [
+  { "node": { "partyId": "CUST_88", "firstName": "Jordan", "lastName": "Lee", "emailAddress": "jordan@example.com", "orderCount": 7 } } ],
+  "pageInfo": { "hasNextPage": false, "endCursor": "cGFydHk6Q1VTVF84OA==" } } } }
 ```
-**maps:** OrderIdentification + `identifications` edge; `externalId` direct lookups · **kind:** `[DB]` · **cost:** cheap · **test:** same order via NetSuite id and Shopify id; unknown id → `null` node (not an error); batch returns all matches in any order.
+**maps:** OrderIdentification / `externalId` / Party search · **kind:** `[DB][SERVICE]` · **cost:** cheap (J5 `orderCount` service-backed) · **test:** order reachable by NetSuite id and Shopify id; `parties` lookup yields `partyId` the agent then uses in `orders(query:"customerPartyId:...")`.
 
 ---
 
-## K. Analytics / BI — DEFERRED (Q2: pick up later)
-> Not in initial scope. `oms-bi` has facts but no query API today; clean build-new later.
+## K. Analytics / BI — DEFERRED (Q2)
+> Not in initial scope; `oms-bi` facts back it later. Illustrative only:
 ```graphql
-# illustrative only — NOT in initial scope
-{ fulfillmentMetrics(facilityId: "WH1", dateFrom: "2026-05-01", dateTo: "2026-05-31", groupBy: DAY) {
-    date unitsShipped avgFulfillmentHours cancelRate } }
+{ fulfillmentMetrics(facilityId: "WH1", dateFrom: "2026-05-01", dateTo: "2026-05-31", groupBy: DAY) { date unitsShipped cancelRate } }
 ```
 
 ---
@@ -364,21 +362,19 @@ Variables: `{ "orderId": "10001" }`
 ```graphql
 # L1 — "which of this customer's orders are stuck in processing?"
 { orders(query: "customerPartyId:CUST_88 statusId:ORDER_APPROVED", first: 20) {
-    edges { node { orderId orderDate orderItems(first: 50) { productId promisedDate fulfillmentStatus } } } } }
-# L2 — one-shot multi-root context
-{ order(orderId: "10042") { orderName statusId } party(partyId: "CUST_88") { partyId firstName lastName orderCount } }
+    edges { node { orderId orderDate orderItems(first: 50) { edges { node { productId promisedDate fulfillmentStatus } } } } } } }
+# L2 — multi-root context
+{ order(orderId: "10042") { orderName statusId } party(partyId: "CUST_88") { firstName lastName orderCount } }
 ```
-**Output (L2):**
-```json
-{ "data": { "order": { "orderName": "NN10042", "statusId": "ORDER_APPROVED" },
-  "party": { "partyId": "CUST_88", "firstName": "Jordan", "lastName": "Lee", "orderCount": 7 } } }
-```
-**test:** agent query validates and runs; `fulfillmentStatus` present so the agent flags items past `promisedDate`; `orderCount` service-backed.
-**Note (query-string tradeoff):** agents must emit the `query:` string correctly — the declared search-key list is published in the SDL so an agent can introspect allowed keys/comparators before composing.
+**Agent loop (introspect → compose → correct):** an agent reads the connection field's description
+(or `@search` keys) to learn allowed search keys/comparators, composes `query:`, and on
+`OPERATOR_NOT_ALLOWED`/`FIELD_NOT_FILTERABLE` self-corrects. The search grammar is in the SDL field
+descriptions precisely so a standard introspection makes it visible.
+**test:** L1 `orderItems` is a connection; `fulfillmentStatus` present; a bad-key query returns the documented error code an agent can act on.
 
 ---
 
-## M. Connection pagination (Q4) — full cursor walk
+## M. Connection pagination (Q4) — cursor walk
 ```graphql
 # M1 — page 1
 { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2) {
@@ -387,41 +383,52 @@ Variables: `{ "orderId": "10001" }`
 { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2, after: "b3JkZXI6MTAwMDU=") {
     edges { cursor node { orderId externalId } } pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }
 ```
-**Output (M1):**
 ```json
-{ "data": { "orders": {
-  "edges": [ { "cursor": "b3JkZXI6MTAwMDE=", "node": { "orderId": "10001", "externalId": "shopify:4567890" } },
-             { "cursor": "b3JkZXI6MTAwMDU=", "node": { "orderId": "10005", "externalId": "shopify:4567901" } } ],
+// M1
+{ "data": { "orders": { "edges": [
+  { "cursor": "b3JkZXI6MTAwMDE=", "node": { "orderId": "10001", "externalId": "shopify:4567890" } },
+  { "cursor": "b3JkZXI6MTAwMDU=", "node": { "orderId": "10005", "externalId": "shopify:4567901" } } ],
   "pageInfo": { "hasNextPage": true, "hasPreviousPage": false, "startCursor": "b3JkZXI6MTAwMDE=", "endCursor": "b3JkZXI6MTAwMDU=" } } } }
-```
-**Output (M2):**
-```json
-{ "data": { "orders": {
-  "edges": [ { "cursor": "b3JkZXI6MTAwMDk=", "node": { "orderId": "10009", "externalId": "shopify:4567912" } } ],
+// M2
+{ "data": { "orders": { "edges": [ { "cursor": "b3JkZXI6MTAwMDk=", "node": { "orderId": "10009", "externalId": "shopify:4567912" } } ],
   "pageInfo": { "hasNextPage": false, "hasPreviousPage": true, "startCursor": "b3JkZXI6MTAwMDk=", "endCursor": "b3JkZXI6MTAwMDk=" } } } }
 ```
-**maps:** OrderHeader; cursor encodes the stable sort key (`orderDate`, then `orderId` tiebreaker) · **kind:** `[DB]` · **cost:** moderate ·
-**test:** page 2 starts strictly after page 1's last edge — **no overlap, no skip**; `union(pages) == same query unpaged`; `hasNextPage==false` on the final page; inserting a row ahead of the cursor mid-walk does NOT cause a re-seen id. Backward paging (`last`/`before`) mirrors this with `hasPreviousPage`.
+**maps:** OrderHeader; cursor encodes the stable sort key `(orderDate, orderId)` — keyset predicate `orderDate > X OR (orderDate = X AND orderId > Y)` · **kind:** `[DB]` · **cost:** moderate ·
+**test:** page 2 starts strictly after page 1's last edge — **no overlap, no skip**; `union(pages) == unpaged set`; `hasNextPage` false on final page; insert-ahead mid-walk does NOT cause a re-seen id; non-unique/null sort values and backward paging (`last`/`before`) tested.
 
 ---
 
 ## N. Guardrail boundary — MUST be rejected (exact error)
 ```graphql
-{ orders(first: 1000) { edges { node { orderItems(first: 1000) { edges { node { adjustments(first: 1000) { edges { node { orderAdjustmentId } } } } } } } } } }   # N1
-{ orders(query: "orderName2:Gift", first: 50) { edges { node { orderId } } } }                                                                                     # N2 (undeclared key)
-{ orders(query: "statusId:ORDER_APPROVED") { edges { node { orderId } } } }                                                                                          # N3 (missing first)
+# N1 — fan-out bomb (nested connections, each within first cap but multiplied)
+{ orders(first: 100) { edges { node { orderItems(first: 100) { edges { node { adjustments(first: 50) { orderAdjustmentId } } } } } } } }
+# N2 — undeclared search key
+{ orders(query: "orderName2:Gift", first: 50) { edges { node { orderId } } } }
+# N3 — missing first/last on a connection
+{ orders(query: "statusId:ORDER_APPROVED") { edges { node { orderId } } } }
+# N5 — first over the cap on a nested edge
+{ order(orderId: "10001") { orderItems(first: 5000) { edges { node { productId } } } } }
+# N6 — service-backed field under a large nested list (batch-key blast radius)
+{ orders(first: 100) { edges { node { orderItems(first: 100) { edges { node { fulfillmentStatus } } } } } } }
+# N7 — declared-but-unindexed search key (deployment misconfig caught at query time)
+{ orders(query: "customerName:Lee", first: 50) { edges { node { orderId } } } }
 ```
 ```json
 // N1
-{ "errors": [ { "message": "query cost 1,000,000,000 exceeds max 1000", "extensions": { "code": "COST_EXCEEDED", "estimatedCost": 1000000000, "maxCost": 1000 } } ], "data": null }
+{ "errors": [ { "message": "query cost 500000 exceeds max 1000", "extensions": { "code": "COST_EXCEEDED", "estimatedCost": 500000, "maxCost": 1000 } } ], "data": null }
 // N2
 { "errors": [ { "message": "search key 'orderName2' is not filterable (allowed: orderId, externalId, orderName, statusId, orderDate, customerPartyId, productStoreId)", "extensions": { "code": "FIELD_NOT_FILTERABLE", "key": "orderName2" } } ], "data": null }
 // N3
-{ "errors": [ { "message": "list field 'orders' requires 'first:' or 'last:' (1..100)", "extensions": { "code": "FIRST_REQUIRED", "field": "orders", "maxFirst": 100 } } ], "data": null }
-// N4 (depth)
-{ "errors": [ { "message": "query depth 8 exceeds max 6", "extensions": { "code": "DEPTH_EXCEEDED", "depth": 8, "maxDepth": 6 } } ], "data": null }
+{ "errors": [ { "message": "connection field 'orders' requires 'first:' or 'last:' (1..100)", "extensions": { "code": "FIRST_REQUIRED", "field": "orders", "maxFirst": 100 } } ], "data": null }
+// N5
+{ "errors": [ { "message": "'first: 5000' on 'orderItems' exceeds maxFirst 100", "extensions": { "code": "FIRST_TOO_LARGE", "field": "orderItems", "maxFirst": 100 } } ], "data": null }
+// N6
+{ "errors": [ { "message": "service-backed field 'fulfillmentStatus' would resolve 10000 keys; exceeds batch limit 1000", "extensions": { "code": "BATCH_LIMIT_EXCEEDED", "field": "fulfillmentStatus", "keys": 10000, "limit": 1000 } } ], "data": null }
+// N7
+{ "errors": [ { "message": "search key 'customerName' is not filterable", "extensions": { "code": "FIELD_NOT_FILTERABLE", "key": "customerName" } } ], "data": null }
+// N4 (depth) — { "errors": [ { "message": "query depth 8 exceeds max 6", "extensions": { "code": "DEPTH_EXCEEDED", "depth": 8, "maxDepth": 6 } } ], "data": null }
 ```
-**test (all N):** structured error, `data:null`, stable `extensions.code`, message names the offending key/limit, nothing executes against the DB. (Q3b covers `OPERATOR_NOT_ALLOWED`.)
+**test (all N):** structured error, `data:null`, stable `extensions.code`, message names the offending key/limit, **nothing executes against the DB**. N6 proves the service-backed batch-key cap (the analyzer's blind-spot mitigation); N5 the per-edge `first` cap; N7 the unindexed-key guard.
 
 ---
 
@@ -429,25 +436,27 @@ Variables: `{ "orderId": "10001" }`
 
 | Domain | by-id | query+sort | nested | computed | view | ext-id | connection |
 |---|---|---|---|---|---|---|---|
-| Order | A1 | A2,Q3a | A1 | A1,L1 | A1 | J1,J2,J3 | A2,M1-2 |
-| Shipment | B1 | — | B1 | — | B1 | — | — |
-| Picklist/Pick | B4 | B3 | B4 | — | B3,B4 | — | B3 |
-| Returns | — | C1 | C1 | — | — | C1 | C1 |
+| Order | A1 | A2,Q3a | A1 | A1,L1 | A1 | J1,J2,J3 | A2,M |
+| Shipment | B1 | B0 | B1 | — | B1 | — | B0 |
+| Picklist/Pick | B4 | B3 | B4 | — | B3,B4 | — | B3,B4 |
+| Returns | — | C | C | — | — | C | C |
 | Transfer/PO | D2 | D1 | D1,D2 | — | D1 | — | D1 |
-| Inventory/ATP | — | — | — | E1,E2 | E3 | — | — |
-| Catalog | F1 | F1 | F1 | — | F1 | F1 | F1 |
-| Facility/Store | G1 | — | G1 | — | G1 | J4 | — |
-| CycleCount | H1 | — | H1 | — | — | — | — |
-| Routing | I1 | — | I1 | — | I1 | — | — |
+| Inventory/ATP | — | — | — | E | E | — | — |
+| Catalog | F | F | F | — | F | F | F |
+| Facility/Store | G | — | G | — | G | J4 | — |
+| CycleCount | H | — | H | — | — | — | H |
+| Routing | I | — | I | — | I | — | — |
+| Party | L2 | J5 | — | J5 | — | J1,J4 | J5 |
 
-Out of initial scope (no column): analytics/aggregation (Q2 deferred), full-text/faceted Solr search (Q1 DB-only).
+Out of scope (no column): analytics/aggregation (Q2 deferred), full-text/faceted Solr search (Q1).
 
 ---
 
-## Decisions baked in (resolved 2026-06-03)
-- **Shopify query language only (shopify-alignment.md):** `query:` search-string filtering, `sortKey`+`reverse`, full Relay connections + cursors, `extensions.cost`/error envelope. **Field names are our OMS data model** (not Shopify's). **Raw entity ids** (D-B — no `gid://`/`Node`).
-- **Q1 DB-backed only** · **Q2 analytics deferred** · **Q3 declare-and-control** (over the query grammar) · **Q4 Relay connections** · **Q5 external-id must-have**.
+## Decisions baked in (2026-06-03)
+- **Shopify query language only:** `query:` string, `sortKey`+`reverse`, full Relay connections, cost/error envelope. **Field names are our OMS model.** **Raw entity ids** (D-B).
+- **G1 hybrid connections** (large=connection, small metadata=plain list). **R1–R3 coverage:** shipments queue (B0), party lookup (J5), bulk ATP (E `inventoryLevels`).
+- Q1 DB-only · Q2 analytics deferred · Q3 declare-and-control · Q4 Relay connections · Q5 external-id.
+- **Governance:** `maxFirst=100` per edge (N5); service-backed batch-key cap (N6); unindexed-key guard (N7); cost saturated in long (no overflow); `extensions.cost` illustrative, `throttleStatus` static in phase 1.
 
-## Out of scope (not represented as queries)
-Writes/mutations, analytics/aggregation (deferred), full-text/faceted Solr search, `unigate` RPC,
-print/export (PDF/CSV), inbound webhooks, live external assembly, global IDs / `node()` (D-B).
+## Out of scope
+Writes/mutations, analytics (deferred), full-text Solr, `unigate` RPC, print/export, inbound webhooks, live external assembly, global IDs / `node()` (D-B).
