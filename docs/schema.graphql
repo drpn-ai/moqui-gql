@@ -1,0 +1,350 @@
+# =============================================================================
+# moqui-gql — GraphQL Schema (SDL), initial scope
+#
+# Field/type names are the Maarg OMS data model (orderId, orderDate, statusId,
+# grandTotal, orderItems, fulfillmentStatus, ...). The query LANGUAGE is
+# Shopify-shaped: `query:` search string, sortKey + reverse, Relay cursor
+# connections, custom scalars. Read-only. DB-backed (Q1). Raw entity ids — no
+# global IDs / Node (D-B). Analytics deferred (Q2).
+#
+# This SDL is the CONTRACT the test catalog (examples.md) exercises. In the
+# engine it is generated from the per-deployment schema artifacts; entity/field
+# wiring differs per install (HotWax org.apache.ofbiz.* vs vanilla mantle.*).
+# This file covers the Order graph fully and the other domains representatively;
+# both grow with the catalog.
+# =============================================================================
+
+# --- Custom scalars ----------------------------------------------------------
+"ISO-8601 timestamp, e.g. 2026-05-14T09:32:00Z."
+scalar DateTime
+"Arbitrary-precision decimal serialized as a string, e.g. \"129.00\"."
+scalar Decimal
+
+# --- Directives (governance / declare-and-control, Q3) -----------------------
+"""
+Declares the search keys accepted in this connection's `query:` string (Shopify
+search syntax). Comparators per key: `:` (eq), `:a,b` (in), and for date/number
+keys `:>` `:>=` `:<` `:<=`. Only declared keys are honored; unknown key ->
+FIELD_NOT_FILTERABLE, disallowed comparator -> OPERATOR_NOT_ALLOWED.
+"""
+directive @search(keys: [String!]!) on FIELD_DEFINITION
+"Static cost weight hint for the query analyzer (service-backed fields are high/opaque)."
+directive @cost(weight: Int!) on FIELD_DEFINITION
+"Marks a field whose value is produced by a Moqui service, not a column (decision 12)."
+directive @service(name: String!) on FIELD_DEFINITION
+
+# --- Relay pagination --------------------------------------------------------
+"Relay PageInfo (full)."
+type PageInfo {
+  hasNextPage: Boolean!
+  hasPreviousPage: Boolean!
+  startCursor: String
+  endCursor: String
+}
+
+# =============================================================================
+# Query root
+# =============================================================================
+type Query {
+  # ---- Order ----
+  "Fetch one order by its raw id, or by host external id."
+  order(orderId: ID, externalId: String): Order
+  "Look up an order by a typed identification (e.g. NETSUITE_ORDER, SHOPIFY_ORDER)."
+  orderByIdentification(identificationTypeId: String!, idValue: String!): Order
+  "List orders. Filter with the Shopify-style `query:` string over the declared keys."
+  orders(
+    query: String
+    sortKey: OrderSortKey = ORDER_DATE
+    reverse: Boolean = false
+    first: Int, after: String, last: Int, before: String
+  ): OrderConnection!
+    @search(keys: ["orderId","externalId","orderName","statusId","orderDate","customerPartyId","productStoreId"])
+
+  # ---- Fulfillment ----
+  shipment(shipmentId: ID!): Shipment
+  picklist(picklistId: ID!): Picklist
+  "BOPIS pickup orders for a facility."
+  pickupOrders(query: String, first: Int, after: String, last: Int, before: String): OrderConnection!
+    @search(keys: ["facilityId","statusId","orderDate"]) @cost(weight: 5)
+  "Ready-to-pick warehouse queue (deployment-specific; e.g. Gorjana adds brandName/isGift keys)."
+  readyToPickOrders(query: String, sortKey: OrderSortKey = ORDER_DATE, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): ReadyToPickOrderConnection!
+    @search(keys: ["facilityId","statusId","shipmentMethodTypeId"]) @cost(weight: 5)
+
+  # ---- Returns ----
+  returns(query: String, first: Int, after: String, last: Int, before: String): ReturnConnection!
+    @search(keys: ["returnId","statusId","orderId","returnDate"])
+
+  # ---- Transfers & purchasing ----
+  transferOrders(query: String, first: Int, after: String, last: Int, before: String): TransferOrderConnection!
+    @search(keys: ["orderId","statusId","facilityId"])
+  purchaseOrder(orderId: ID!): PurchaseOrder
+
+  # ---- Catalog ----
+  product(productId: ID, externalId: String): Product
+  products(query: String, sortKey: ProductSortKey = PRODUCT_NAME, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): ProductConnection!
+    @search(keys: ["productId","productName","primaryProductCategoryId","productTypeId"])
+
+  # ---- Facility & store ----
+  facility(facilityId: ID, externalId: String): Facility
+  productStore(productStoreId: ID!): ProductStore
+
+  # ---- Inventory / ATP (service-backed) ----
+  checkBopisInventory(facilityId: ID!, productId: ID!, quantity: Int!): InventoryCheck @service(name: "get#BopisInventory") @cost(weight: 25)
+  productOnlineAtp(productId: ID!, productStoreId: ID!): AtpResult @service(name: "get#ProductOnlineAtp") @cost(weight: 25)
+  facilityInventory(facilityId: ID!, productId: ID!): FacilityInventory @cost(weight: 10)
+
+  # ---- Inventory count & routing ----
+  cycleCount(inventoryCountImportId: ID!): CycleCount
+  orderRoutingGroup(routingGroupId: ID!): OrderRoutingGroup
+
+  # ---- Party ----
+  party(partyId: ID!): Party
+}
+
+# =============================================================================
+# Order graph
+# =============================================================================
+enum OrderSortKey { ORDER_DATE ORDER_NAME GRAND_TOTAL ORDER_ID RELEVANCE }
+
+"Computed fulfillment rollup for an order item (decision 12; service-backed)."
+enum FulfillmentStatus { PROCESSING PARTIALLY_COMPLETED COMPLETED CANCELLED RETURNED PARTIALLY_REFUNDED }
+
+type OrderConnection { edges: [OrderEdge!]!  pageInfo: PageInfo! }
+type OrderEdge { cursor: String!  node: Order! }
+
+type Order {
+  orderId: ID!
+  orderName: String
+  externalId: String
+  statusId: ID!
+  orderDate: DateTime
+  grandTotal: Decimal
+  currencyUomId: ID
+  productStoreId: ID
+  salesChannelEnumId: ID
+  customerPartyId: ID
+  "Service-backed: BILL_TO party display name (Person first+last or group)."
+  customerName: String @service(name: "get#OrderCustomerName")
+  billingAddress: PostalAddress
+  identifications(first: Int = 10): [OrderIdentification!]!
+  orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection! @cost(weight: 2)
+  shipGroups(first: Int, after: String, last: Int, before: String): ShipGroupConnection! @cost(weight: 2)
+  statuses(first: Int = 50): [OrderStatus!]!
+  adjustments(first: Int = 50): [OrderAdjustment!]!
+  paymentPreferences(first: Int = 20): [OrderPaymentPreference!]!
+  returns(first: Int, after: String): ReturnConnection!
+}
+
+type OrderItemConnection { edges: [OrderItemEdge!]!  pageInfo: PageInfo! }
+type OrderItemEdge { cursor: String!  node: OrderItem! }
+
+type OrderItem {
+  orderId: ID!
+  orderItemSeqId: ID!
+  productId: ID
+  quantity: Int
+  unitPrice: Decimal
+  statusId: ID
+  shipGroupSeqId: ID
+  promisedDate: DateTime
+  estimatedDeliveryDate: DateTime
+  returnTillDate: DateTime
+  "Service-backed computed fulfillment rollup (decision 12)."
+  fulfillmentStatus: FulfillmentStatus @service(name: "get#ItemFulfillmentStatus") @cost(weight: 25)
+  adjustments(first: Int = 50): [OrderAdjustment!]!
+}
+
+type OrderIdentification { orderIdentificationTypeId: ID!  idValue: String! }
+type OrderStatus { statusId: ID!  statusDatetime: DateTime }
+type OrderAdjustment { orderAdjustmentId: ID!  orderAdjustmentTypeId: ID!  amount: Decimal  comments: String }
+type OrderPaymentPreference { orderPaymentPreferenceId: ID!  paymentMethodTypeId: ID!  maxAmount: Decimal  statusId: ID }
+
+type PostalAddress {
+  contactMechId: ID
+  toName: String
+  address1: String
+  address2: String
+  city: String
+  stateProvinceGeoId: ID
+  postalCode: String
+  countryGeoId: ID
+}
+
+# Ship groups
+type ShipGroupConnection { edges: [ShipGroupEdge!]!  pageInfo: PageInfo! }
+type ShipGroupEdge { cursor: String!  node: ShipGroup! }
+type ShipGroup {
+  shipGroupSeqId: ID!
+  shipmentMethodTypeId: ID
+  carrierPartyId: ID
+  trackingCode: String
+  facilityId: ID
+  facility: Facility
+  picklistId: ID
+  picker: Person
+  orderItems(first: Int = 100): [OrderItem!]!
+}
+
+# Ready-to-pick (view-backed; deployment-specific extra fields)
+type ReadyToPickOrderConnection { edges: [ReadyToPickOrderEdge!]!  pageInfo: PageInfo! }
+type ReadyToPickOrderEdge { cursor: String!  node: ReadyToPickOrder! }
+type ReadyToPickOrder {
+  orderId: ID!
+  orderName: String
+  netsuiteOrderName: String
+  shipToStateProvinceGeoId: ID
+  facilityId: ID
+}
+
+# =============================================================================
+# Fulfillment — Shipment / Picklist
+# =============================================================================
+type Shipment {
+  shipmentId: ID!
+  statusId: ID!
+  originFacilityId: ID
+  destinationFacilityId: ID
+  shipmentPackages(first: Int = 50): [ShipmentPackage!]!
+  shipmentRouteSegments(first: Int = 10): [ShipmentRouteSegment!]!
+}
+type ShipmentPackage {
+  shipmentPackageSeqId: ID!
+  trackingCode: String
+  labelImageUrl: String
+  shipmentPackageContents(first: Int = 100): [ShipmentPackageContent!]!
+}
+type ShipmentPackageContent { productId: ID!  quantity: Int }
+type ShipmentRouteSegment { carrierPartyId: ID  shipmentMethodTypeId: ID  trackingIdNumber: String  trackingUrl: String }
+
+type Picklist {
+  picklistId: ID!
+  statusId: ID!
+  picklistDate: DateTime
+  facilityId: ID
+  picklistItems(first: Int = 500): [PicklistItem!]! @cost(weight: 3)
+}
+type PicklistItem { orderId: ID  orderName: String  productId: ID  quantity: Int  itemStatusId: ID }
+
+# =============================================================================
+# Returns
+# =============================================================================
+enum ReturnSortKey { RETURN_DATE RETURN_ID STATUS }
+type ReturnConnection { edges: [ReturnEdge!]!  pageInfo: PageInfo! }
+type ReturnEdge { cursor: String!  node: Return! }
+type Return {
+  returnId: ID!
+  statusId: ID!
+  orderId: ID
+  returnDate: DateTime
+  identifications(first: Int = 5): [ReturnIdentification!]!
+  returnItems(first: Int = 100): [ReturnItem!]!
+}
+type ReturnIdentification { returnIdentificationTypeId: ID!  idValue: String! }
+type ReturnItem { returnItemSeqId: ID!  orderId: ID  productId: ID  returnQuantity: Int  refundAmount: Decimal }
+
+# =============================================================================
+# Transfers & purchasing
+# =============================================================================
+type TransferOrderConnection { edges: [TransferOrderEdge!]!  pageInfo: PageInfo! }
+type TransferOrderEdge { cursor: String!  node: TransferOrder! }
+type TransferOrder {
+  orderId: ID!
+  statusId: ID!
+  originFacilityId: ID
+  destinationFacilityId: ID
+  orderItems(first: Int = 100): [OrderItem!]!
+  shipments(first: Int = 10): [Shipment!]!
+}
+type PurchaseOrder {
+  orderId: ID!
+  statusId: ID
+  receipts(first: Int = 100): [ShipmentReceipt!]!
+}
+type ShipmentReceipt { shipmentReceiptId: ID!  productId: ID  quantityAccepted: Decimal }
+
+# =============================================================================
+# Catalog
+# =============================================================================
+enum ProductSortKey { PRODUCT_NAME PRODUCT_ID RELEVANCE }
+type ProductConnection { edges: [ProductEdge!]!  pageInfo: PageInfo! }
+type ProductEdge { cursor: String!  node: Product! }
+type Product {
+  productId: ID!
+  productName: String
+  internalName: String
+  productTypeId: ID
+  primaryProductCategoryId: ID
+  isVirtual: Boolean
+  isVariant: Boolean
+  identifications(first: Int = 10): [GoodIdentification!]!
+  variants(first: Int = 50): [Product!]!
+}
+type GoodIdentification { goodIdentificationTypeId: ID!  idValue: String! }
+
+# =============================================================================
+# Facility & store
+# =============================================================================
+type Facility {
+  facilityId: ID!
+  facilityName: String
+  facilityTypeId: ID
+  externalId: String
+  contactMechs(first: Int = 10): [FacilityContactMech!]!
+  locations(first: Int = 50): [FacilityLocation!]!
+  carriers(first: Int = 20): [Party!]!
+  productStores(first: Int = 10): [ProductStore!]!
+}
+type FacilityContactMech { contactMechPurposeTypeId: ID  postalAddress: PostalAddress }
+type FacilityLocation { locationSeqId: ID!  areaId: String  aisleId: String }
+type ProductStore {
+  productStoreId: ID!
+  storeName: String
+  shipmentMethods(first: Int = 20): [ProductStoreShipmentMethod!]!
+}
+type ProductStoreShipmentMethod { shipmentMethodTypeId: ID!  carrierPartyId: ID  isTrackingRequired: Boolean }
+
+# =============================================================================
+# Inventory / ATP (service-backed result types)
+# =============================================================================
+type InventoryCheck { available: Boolean!  atp: Decimal }
+type AtpResult { atp: Decimal }
+type FacilityInventory { quantityOnHandTotal: Decimal  availableToPromiseTotal: Decimal  minimumStock: Decimal }
+
+# =============================================================================
+# Cycle count
+# =============================================================================
+type CycleCount {
+  inventoryCountImportId: ID!
+  statusId: ID!
+  facilityId: ID
+  items(first: Int = 500): [CycleCountItem!]! @cost(weight: 3)
+}
+type CycleCountItem { locationSeqId: ID  productId: ID  quantity: Decimal  varianceQuantityOnHand: Decimal }
+
+# =============================================================================
+# Order routing
+# =============================================================================
+type OrderRoutingGroup {
+  routingGroupId: ID!
+  statusId: ID
+  routings(first: Int = 20): [OrderRouting!]!
+  runs(first: Int = 10): [OrderRoutingRun!]!
+}
+type OrderRouting { orderRoutingId: ID!  rules(first: Int = 50): [OrderRoutingRule!]! }
+type OrderRoutingRule { fieldName: String  operatorEnumId: ID  fieldValue: String }
+type OrderRoutingRun { routingRunId: ID!  runStartTime: DateTime  orderCount: Int }
+
+# =============================================================================
+# Party
+# =============================================================================
+type Party {
+  partyId: ID!
+  partyTypeEnumId: ID
+  firstName: String
+  lastName: String
+  "Service-backed convenience: orders placed by this party."
+  orderCount: Int @service(name: "get#PartyOrderCount") @cost(weight: 25)
+}
+type Person { partyId: ID  firstName: String  lastName: String }
