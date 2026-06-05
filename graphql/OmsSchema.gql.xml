@@ -82,6 +82,20 @@
             sort-keys="SHIPPED_DATE:estimatedShipDate STATUS:statusId SHIPMENT_ID:shipmentId"/>
     </gql-type>
 
+    <gql-type name="Return" entity-name="org.apache.ofbiz.order.return.ReturnHeader">
+        <field name="returnId" entity-field="returnId" type="ID"/>
+        <field name="statusId" entity-field="statusId"/>
+        <field name="returnHeaderTypeId" entity-field="returnHeaderTypeId"/>
+        <field name="fromPartyId" entity-field="fromPartyId"/>
+        <field name="entryDate" entity-field="entryDate" type="DateTime"/>
+        <field name="externalId" entity-field="externalId"/>
+        <field name="currencyUomId" entity-field="currencyUomId"/>
+        <root-query name="return" by-pk="true" pk-arg="returnId" external-id="true"/>
+        <root-query name="returns" list="true"
+            search-keys="returnId:eq,in statusId:eq,in fromPartyId:eq,in entryDate:gt,gte,lt,lte"
+            sort-keys="RETURN_DATE:entryDate STATUS:statusId RETURN_ID:returnId"/>
+    </gql-type>
+
     <!-- Service-backed ROOT (decision 12, R3): no backing entity — fields come from the service result
          map. Bulk ATP/on-hand for many products (optionally per facility). Cost: opaque/high. -->
     <gql-type name="InventoryLevel">

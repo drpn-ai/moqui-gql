@@ -8,7 +8,8 @@ import org.moqui.Moqui
         SearchQueryParserTests.class, CostModelTests.class, GqlScalarsTests.class, IndexClassifierTests.class,
         GqlSchemaBuilderTests.class, GqlToolFactoryTests.class, GqlEngineTests.class, PartyConnectionTests.class,
         ExternalIdTests.class, ServiceBackedTests.class, ShipmentRootTests.class, InventoryLevelsTests.class,
-        GovernorTests.class, EndpointTests.class ])
+        GovernorTests.class, EndpointTests.class, ScopeSeamTests.class, ConnectionWalkTests.class,
+        CatalogContractTests.class ])
 class MoquiSuite {
     @AfterAll
     static void destroyMoqui() { Moqui.destroyActiveExecutionContextFactory() }

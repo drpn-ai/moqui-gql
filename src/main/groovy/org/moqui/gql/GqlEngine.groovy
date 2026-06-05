@@ -15,6 +15,7 @@ import org.moqui.gql.exec.ConnectionResolver
 import org.moqui.gql.exec.NestedConnectionLoader
 import org.moqui.gql.exec.NestedEdgeMeta
 import org.moqui.gql.exec.ServiceBackedLoader
+import org.moqui.gql.scope.ScopeFilters
 import org.moqui.impl.entity.EntityFacadeImpl
 
 /**
@@ -247,13 +248,15 @@ class GqlEngine {
                             // 1) match the association row (typed external id), 2) follow the fk to the target
                             def af = ec.entity.find(rq.identEntity).condition(rq.identValueField, valueVal)
                             if (typeVal != null && rq.identTypeField) af.condition(rq.identTypeField, typeVal)
+                            ScopeFilters.apply(af, rq.identEntity, ec)
                             def assoc = af.useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(1).fetchSize(1).list()
                             if (!assoc) return null
                             def fkVal = assoc.get(0).get(rq.identFkField)
                             if (fkVal == null) return null
                             def tgtPk = ((EntityFacadeImpl) ec.entity).getEntityDefinition(targetEntity).getPkFieldNames().get(0)
-                            def tgt = ec.entity.find(targetEntity).condition(tgtPk, fkVal)
-                                    .useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(1).fetchSize(1).list()
+                            def tgtFind = ec.entity.find(targetEntity).condition(tgtPk, fkVal)
+                            ScopeFilters.apply(tgtFind, targetEntity, ec)
+                            def tgt = tgtFind.useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(1).fetchSize(1).list()
                             return tgt ? tgt.get(0).getMap() : null
                         } as DataFetcher))
             } else if (rq.byPk) {
@@ -272,6 +275,7 @@ class GqlEngine {
                             } else {
                                 return null
                             }
+                            ScopeFilters.apply(find, entityName, ec)   // row-scope seam (phase-1 no-op)
                             // first-row semantics: composite-PK views (e.g. parties) can match >1 row
                             def rows = find.useClone(useClone).queryTimeout(queryTimeoutSeconds)
                                     .maxRows(1).fetchSize(1).list()

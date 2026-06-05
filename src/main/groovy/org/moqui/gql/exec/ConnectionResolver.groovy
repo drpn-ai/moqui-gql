@@ -12,6 +12,7 @@ import org.moqui.gql.GqlField
 import org.moqui.gql.GqlRootQuery
 import org.moqui.gql.GqlType
 import org.moqui.gql.GqlValidationException
+import org.moqui.gql.scope.ScopeFilters
 import org.moqui.gql.search.SearchQueryParser
 import org.moqui.gql.search.SearchTerm
 import org.moqui.impl.context.ExecutionContextImpl
@@ -118,6 +119,7 @@ class ConnectionResolver {
         // ----- execute: fetch limit+1 in scan order to detect a further page; fetchSize<=maxRows (MySQL quirk) -----
         EntityFind ef = ec.entity.find(entityName)
         if (where != null) ef.condition(where)
+        ScopeFilters.apply(ef, entityName, ec)   // row-scope seam (phase-1 no-op)
         String dir = scanDescending ? "-" : ""
         for (String f in orderingFields) ef.orderBy(dir + f)
         ef.useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(limit + 1).fetchSize(limit + 1)

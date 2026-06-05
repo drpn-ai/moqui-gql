@@ -5,8 +5,10 @@ import org.dataloader.BatchLoaderEnvironment
 import org.dataloader.MappedBatchLoaderWithContext
 import org.moqui.context.ExecutionContext
 import org.moqui.entity.EntityCondition
+import org.moqui.entity.EntityFind
 import org.moqui.entity.EntityList
 import org.moqui.entity.EntityValue
+import org.moqui.gql.scope.ScopeFilters
 
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionStage
@@ -53,11 +55,13 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
         String afterStr = argsMap != null ? (String) argsMap.get("after") : null
 
         // one batched query for ALL parent keys in this level
-        EntityList rows = ec.entity.find(childEntityName)
+        EntityFind cf = ec.entity.find(childEntityName)
                 .condition(fkField, EntityCondition.IN, new ArrayList<Object>(keys))
                 .orderBy(orderByList())
                 .useClone(useClone).queryTimeout(queryTimeoutSeconds)
-                .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000)).list()
+                .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000))
+        ScopeFilters.apply(cf, childEntityName, ec)   // row-scope seam (phase-1 no-op)
+        EntityList rows = cf.list()
 
         // group children by parent key, preserving the (fk, intra-group) fetch order within each group
         Map<Object, List<EntityValue>> grouped = new LinkedHashMap<Object, List<EntityValue>>()

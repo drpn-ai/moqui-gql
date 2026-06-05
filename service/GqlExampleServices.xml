@@ -57,4 +57,30 @@
             </iterate>
         </actions>
     </service>
+
+    <!-- Idempotent test-data generator: ensure N sales Shipments exist (linked to real orders) so the
+         shipments root has data. Marked externalId GQLTEST-<orderId>; re-running never duplicates. -->
+    <service verb="ensure" noun="TestShipments" authenticate="false">
+        <in-parameters><parameter name="count" type="Integer" default-value="5"/></in-parameters>
+        <out-parameters><parameter name="shipmentIds" type="List"/></out-parameters>
+        <actions>
+            <script><![CDATA[
+                shipmentIds = []
+                def orders = ec.entity.find("org.apache.ofbiz.order.order.OrderHeader")
+                        .selectField("orderId").orderBy("orderId").maxRows(count).fetchSize(count).list()
+                for (oh in orders) {
+                    def ext = "GQLTEST-" + oh.orderId
+                    def existing = ec.entity.find("org.apache.ofbiz.shipment.shipment.Shipment")
+                            .condition("externalId", ext).selectField("shipmentId").maxRows(1).fetchSize(1).list()
+                    if (existing) { shipmentIds.add(existing[0].shipmentId); continue }
+                    def s = ec.entity.makeValue("org.apache.ofbiz.shipment.shipment.Shipment")
+                    s.setAll([shipmentTypeId: "SALES_SHIPMENT", statusId: "SHIPMENT_SHIPPED",
+                              primaryOrderId: oh.orderId, originFacilityId: "M100002",
+                              estimatedShipDate: ec.user.nowTimestamp, externalId: ext])
+                    s.setSequencedIdPrimary(); s.create()
+                    shipmentIds.add(s.shipmentId)
+                }
+            ]]></script>
+        </actions>
+    </service>
 </services>
