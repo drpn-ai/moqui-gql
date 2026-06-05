@@ -6,7 +6,8 @@ import org.moqui.Moqui
 @Suite
 @SelectClasses([ ScaffoldSmokeTests.class, QueryTimeoutTests.class, SchemaArtifactParserTests.class,
         SearchQueryParserTests.class, CostModelTests.class, GqlScalarsTests.class, IndexClassifierTests.class,
-        GqlSchemaBuilderTests.class, GqlToolFactoryTests.class ])
+        GqlSchemaBuilderTests.class, GqlToolFactoryTests.class, GqlEngineTests.class, PartyConnectionTests.class,
+        ExternalIdTests.class, ServiceBackedTests.class, ShipmentRootTests.class, InventoryLevelsTests.class ])
 class MoquiSuite {
     @AfterAll
     static void destroyMoqui() { Moqui.destroyActiveExecutionContextFactory() }

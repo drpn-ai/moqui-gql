@@ -14,11 +14,29 @@
         <field name="grandTotal" entity-field="grandTotal" type="Decimal"/>
         <field name="currencyUomId" entity-field="currencyUom"/>
         <field name="productStoreId" entity-field="productStoreId"/>
-        <edge name="orderItems" entity-relationship="OrderItems" target-type="OrderItem" list="true"/>
+        <!-- service-backed field (decision 12): value from a Moqui service, not a column. Opaque to
+             static cost; resolved through a batched DataLoader. (Contract: customerName @service.) -->
+        <field name="customerName" type="String"
+               resolver-service="GqlExampleServices.get#OrderCustomerName"
+               resolver-in="orderId" resolver-out="customerName"/>
+        <edge name="orderItems" entity-relationship="OrderItem" target-type="OrderItem" list="true"/>
+        <!-- plain bounded list (not a connection): typed external ids for this order -->
+        <edge name="identifications" entity-relationship="OrderIdentification" target-type="OrderIdentification"
+              list="true" kind="list" first-default="10"/>
         <root-query name="order" by-pk="true" pk-arg="orderId" external-id="true"/>
         <root-query name="orders" list="true"
             search-keys="orderId:eq,in externalId:eq,in orderName:eq statusId:eq,in orderDate:gt,gte,lt,lte productStoreId:eq,in"
             sort-keys="ORDER_DATE:orderDate ORDER_NAME:orderName GRAND_TOTAL:grandTotal ORDER_ID:orderId"/>
+        <!-- indirect external-id lookup: OrderIdentification(typeId, idValue) -> Order -->
+        <root-query name="orderByIdentification" by-identification="true"
+            identification-entity="co.hotwax.order.OrderIdentification"
+            type-arg="identificationTypeId" type-field="orderIdentificationTypeId"
+            value-arg="idValue" value-field="idValue" fk-field="orderId"/>
+    </gql-type>
+
+    <gql-type name="OrderIdentification" entity-name="co.hotwax.order.OrderIdentification">
+        <field name="orderIdentificationTypeId" entity-field="orderIdentificationTypeId" type="ID"/>
+        <field name="idValue" entity-field="idValue"/>
     </gql-type>
 
     <gql-type name="OrderItem" entity-name="org.apache.ofbiz.order.order.OrderItem">
@@ -28,5 +46,54 @@
         <field name="quantity" entity-field="quantity" type="Int"/>
         <field name="unitPrice" entity-field="unitPrice" type="Decimal"/>
         <field name="statusId" entity-field="statusId"/>
+    </gql-type>
+
+    <!-- View-entity-backed type (decision 12): firstName/lastName/roleTypeId come from a Party+Person+
+         PartyRole join. Composite PK (partyId, roleTypeId) exercises the composite-PK keyset cursor. -->
+    <gql-type name="Party" entity-name="co.hotwax.party.party.PartyNameAndRoleDetail">
+        <field name="partyId" entity-field="partyId" type="ID"/>
+        <field name="partyTypeId" entity-field="partyTypeId"/>
+        <field name="roleTypeId" entity-field="roleTypeId"/>
+        <field name="firstName" entity-field="firstName"/>
+        <field name="lastName" entity-field="lastName"/>
+        <field name="externalId" entity-field="externalId"/>
+        <field name="statusId" entity-field="statusId"/>
+        <root-query name="party" by-pk="true" pk-arg="partyId" external-id="true"/>
+        <root-query name="parties" list="true"
+            search-keys="partyId:eq,in externalId:eq,in firstName:eq lastName:eq roleTypeId:eq,in"
+            sort-keys="PARTY_ID:partyId LAST_NAME:lastName"/>
+    </gql-type>
+
+    <!-- Entity-backed type + new roots (single PK). estimatedShipDate is the Shipment date field
+         (our data-model name) mapped to the SHIPPED_DATE sort key. -->
+    <gql-type name="Shipment" entity-name="org.apache.ofbiz.shipment.shipment.Shipment">
+        <field name="shipmentId" entity-field="shipmentId" type="ID"/>
+        <field name="shipmentTypeId" entity-field="shipmentTypeId"/>
+        <field name="statusId" entity-field="statusId"/>
+        <field name="primaryOrderId" entity-field="primaryOrderId"/>
+        <field name="originFacilityId" entity-field="originFacilityId"/>
+        <field name="destinationFacilityId" entity-field="destinationFacilityId"/>
+        <field name="shipmentMethodTypeId" entity-field="shipmentMethodTypeId"/>
+        <field name="estimatedShipDate" entity-field="estimatedShipDate" type="DateTime"/>
+        <field name="externalId" entity-field="externalId"/>
+        <root-query name="shipment" by-pk="true" pk-arg="shipmentId" external-id="true"/>
+        <root-query name="shipments" list="true"
+            search-keys="shipmentId:eq,in statusId:eq,in originFacilityId:eq,in shipmentMethodTypeId:eq,in estimatedShipDate:gt,gte,lt,lte"
+            sort-keys="SHIPPED_DATE:estimatedShipDate STATUS:statusId SHIPMENT_ID:shipmentId"/>
+    </gql-type>
+
+    <!-- Service-backed ROOT (decision 12, R3): no backing entity — fields come from the service result
+         map. Bulk ATP/on-hand for many products (optionally per facility). Cost: opaque/high. -->
+    <gql-type name="InventoryLevel">
+        <field name="productId" type="ID"/>
+        <field name="facilityId" type="ID"/>
+        <field name="availableToPromise" type="Decimal"/>
+        <field name="quantityOnHand" type="Decimal"/>
+        <root-query name="inventoryLevels" service="true"
+            service-name="GqlExampleServices.get#InventoryLevels" service-out="inventoryLevels"
+            returns-list="true">
+            <arg name="productIds" type="IDList" required="true"/>
+            <arg name="facilityIds" type="IDList"/>
+        </root-query>
     </gql-type>
 </gql-schema>

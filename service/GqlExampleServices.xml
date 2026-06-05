@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/service-definition-3.xsd">
+    <!--
+      Example service-backed resolvers for the GraphQL layer (decision 12). These demonstrate fields
+      whose value is produced by a Moqui service rather than read from a column. The schema artifact's
+      resolver-service points here; the engine batches calls through a DataLoader.
+    -->
+    <service verb="get" noun="OrderCustomerName" authenticate="false">
+        <description>BILL_TO customer display name for an order (service-backed field example).</description>
+        <in-parameters><parameter name="orderId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="customerName"/>
+            <parameter name="customerPartyId"/>
+        </out-parameters>
+        <actions>
+            <entity-find entity-name="org.apache.ofbiz.order.order.OrderRole" list="billToList">
+                <econdition field-name="orderId"/>
+                <econdition field-name="roleTypeId" value="BILL_TO_CUSTOMER"/>
+                <select-field field-name="partyId"/>
+            </entity-find>
+            <if condition="billToList">
+                <set field="customerPartyId" from="billToList[0].partyId"/>
+                <entity-find-one entity-name="org.apache.ofbiz.party.party.Person" value-field="person" cache="true">
+                    <field-map field-name="partyId" from="customerPartyId"/>
+                </entity-find-one>
+                <if condition="person">
+                    <set field="customerName" from="((person.firstName ?: '') + ' ' + (person.lastName ?: '')).trim()"/>
+                </if>
+            </if>
+        </actions>
+    </service>
+
+    <service verb="get" noun="InventoryLevels" authenticate="false">
+        <description>ATP/on-hand per product, summed from InventoryItem (service-backed ROOT example).
+            Optional facilityIds filter; returns one InventoryLevel per requested product.</description>
+        <in-parameters>
+            <parameter name="productIds" type="List" required="true"/>
+            <parameter name="facilityIds" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="inventoryLevels" type="List"/></out-parameters>
+        <actions>
+            <set field="inventoryLevels" from="[]"/>
+            <set field="singleFac" from="facilityIds?.size() == 1 ? facilityIds[0] : null"/>
+            <iterate list="productIds" entry="pid">
+                <entity-find entity-name="org.apache.ofbiz.product.inventory.InventoryItem" list="iiList">
+                    <econdition field-name="productId" from="pid"/>
+                    <econdition field-name="facilityId" operator="in" from="facilityIds" ignore-if-empty="true"/>
+                    <select-field field-name="availableToPromiseTotal,quantityOnHandTotal"/>
+                </entity-find>
+                <set field="atp" from="0.0"/>
+                <set field="ohq" from="0.0"/>
+                <iterate list="iiList" entry="ii">
+                    <set field="atp" from="atp + (ii.availableToPromiseTotal ?: 0.0)"/>
+                    <set field="ohq" from="ohq + (ii.quantityOnHandTotal ?: 0.0)"/>
+                </iterate>
+                <script>inventoryLevels.add([productId: pid, facilityId: singleFac, availableToPromise: atp, quantityOnHand: ohq])</script>
+            </iterate>
+        </actions>
+    </service>
+</services>

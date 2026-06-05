@@ -36,9 +36,10 @@ class GqlSchemaBuilder {
         additional.add(GqlScalars.DATE_TIME)
         additional.add(GqlScalars.DECIMAL)
 
-        // which target types need a Relay connection (used by a list edge or list root query)
+        // which target types need a Relay connection (used by a connection edge or list root query;
+        // plain-list edges return [Type!]! and need no Connection wrapper)
         Set<String> connTargets = new LinkedHashSet<>()
-        for (GqlType t in art.types.values()) for (GqlEdge e in t.edges.values()) if (e.list) connTargets.add(e.targetType)
+        for (GqlType t in art.types.values()) for (GqlEdge e in t.edges.values()) if (e.isConnection()) connTargets.add(e.targetType)
         for (GqlRootQuery q in art.rootQueries.values()) if (q.list) connTargets.add(q.targetType)
 
         // object types
@@ -49,7 +50,10 @@ class GqlSchemaBuilder {
                 if (fld.isServiceBacked()) cm.serviceBackedFields.add(fld.name)
             }
             for (GqlEdge e in t.edges.values()) {
-                if (e.list) {
+                if (e.isPlainList()) {
+                    cm.listFields.add(e.name)
+                    b.field(plainListField(e.name, e.targetType))
+                } else if (e.isConnection()) {
                     cm.listFields.add(e.name)
                     b.field(connectionField(e.name, e.targetType, false, null, null))
                 } else {
@@ -78,7 +82,15 @@ class GqlSchemaBuilder {
         Map<String, GraphQLEnumType> enums = new LinkedHashMap<>()
         GraphQLObjectType.Builder qb = GraphQLObjectType.newObject().name("Query")
         for (GqlRootQuery q in art.rootQueries.values()) {
-            if (q.list) {
+            if (q.serviceBacked) {
+                GraphQLOutputType ret = q.returnsList ?
+                        GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(q.targetType)))) :
+                        GraphQLTypeReference.typeRef(q.targetType)
+                GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition().name(q.name).type(ret)
+                for (GqlArg a in q.args) fb.argument(arg(a.name, inputType(a.type, a.required)))
+                qb.field(fb.build())
+                cm.serviceBackedFields.add(q.name)   // opaque to static analysis -> fixed high cost
+            } else if (q.list) {
                 cm.listFields.add(q.name)
                 GraphQLEnumType sortEnum = null
                 if (!q.sortKeys.isEmpty()) {
@@ -91,6 +103,12 @@ class GqlSchemaBuilder {
                     }
                 }
                 qb.field(connectionField(q.name, q.targetType, true, q.searchKeys.keySet(), sortEnum))
+            } else if (q.byIdentification) {
+                GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
+                        .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType))
+                if (q.identTypeArg) fb.argument(arg(q.identTypeArg, Scalars.GraphQLString))
+                if (q.identValueArg) fb.argument(arg(q.identValueArg, Scalars.GraphQLString))
+                qb.field(fb.build())
             } else {
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
                         .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType))
@@ -107,12 +125,30 @@ class GqlSchemaBuilder {
         return new BuiltSchema(schema: schema, costModel: cm, artifact: art)
     }
 
+    /** A plain bounded list field [Type!]! with a `first` cap arg (no Relay wrapper). */
+    private static GraphQLFieldDefinition plainListField(String name, String targetType) {
+        return GraphQLFieldDefinition.newFieldDefinition().name(name)
+                .type(GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(targetType)))))
+                .argument(arg("first", Scalars.GraphQLInt)).build()
+    }
+
     // ---- helpers ----
     private static GraphQLFieldDefinition scalarField(String name, GraphQLScalarType type) {
         return GraphQLFieldDefinition.newFieldDefinition().name(name).type(type).build()
     }
     private static GraphQLArgument arg(String name, GraphQLInputType type) {
         return GraphQLArgument.newArgument().name(name).type(type).build()
+    }
+    private static GraphQLInputType inputType(String type, boolean required) {
+        GraphQLInputType base
+        switch (type) {
+            case "IDList": base = GraphQLList.list(GraphQLNonNull.nonNull(Scalars.GraphQLID)); break
+            case "StringList": base = GraphQLList.list(GraphQLNonNull.nonNull(Scalars.GraphQLString)); break
+            case "Int": base = Scalars.GraphQLInt; break
+            case "ID": base = Scalars.GraphQLID; break
+            default: base = Scalars.GraphQLString
+        }
+        return required ? GraphQLNonNull.nonNull(base) : base
     }
     private static GraphQLOutputType scalarType(String type) {
         switch (type) {

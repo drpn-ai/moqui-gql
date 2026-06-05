@@ -20,12 +20,14 @@ class SchemaArtifactParser {
                             sortable: "true".equals(fn.attribute("sortable")),
                             costOverride: asInt(fn.attribute("cost")),
                             resolverService: fn.attribute("resolver-service"),
-                            resolverIn: splitList(fn.attribute("resolver-in"))))
+                            resolverIn: splitList(fn.attribute("resolver-in")),
+                            resolverOut: fn.attribute("resolver-out")))
                 }
                 for (MNode en in tn.children("edge")) {
                     t.edges.put(en.attribute("name"), new GqlEdge(
                             name: en.attribute("name"), entityRelationship: en.attribute("entity-relationship"),
                             targetType: en.attribute("target-type"), list: "true".equals(en.attribute("list")),
+                            kind: en.attribute("kind") ?: "connection", firstDefault: asInt(en.attribute("first-default")),
                             costOverride: asInt(en.attribute("cost")),
                             resolverService: en.attribute("resolver-service"),
                             resolverIn: splitList(en.attribute("resolver-in"))))
@@ -42,14 +44,26 @@ class SchemaArtifactParser {
 
     private static void addRootQuery(SchemaArtifact art, MNode qn, String defaultTargetType) {
         String tgt = qn.attribute("target-type") ?: defaultTargetType
-        art.rootQueries.put(qn.attribute("name"), new GqlRootQuery(
+        GqlRootQuery rq = new GqlRootQuery(
                 name: qn.attribute("name"), targetType: tgt,
                 entityName: qn.attribute("entity-name"), pkArg: qn.attribute("pk-arg"),
                 byPk: "true".equals(qn.attribute("by-pk")),
                 externalId: "true".equals(qn.attribute("external-id")),
                 list: "true".equals(qn.attribute("list")),
                 searchKeys: parseSearchKeys(qn.attribute("search-keys")),
-                sortKeys: parseSortKeys(qn.attribute("sort-keys"))))
+                sortKeys: parseSortKeys(qn.attribute("sort-keys")),
+                byIdentification: "true".equals(qn.attribute("by-identification")),
+                identEntity: qn.attribute("identification-entity"),
+                identTypeArg: qn.attribute("type-arg"), identTypeField: qn.attribute("type-field"),
+                identValueArg: qn.attribute("value-arg"), identValueField: qn.attribute("value-field"),
+                identFkField: qn.attribute("fk-field"),
+                serviceBacked: "true".equals(qn.attribute("service")),
+                serviceName: qn.attribute("service-name"), serviceOut: qn.attribute("service-out"),
+                returnsList: "true".equals(qn.attribute("returns-list")))
+        for (MNode an in qn.children("arg")) rq.args.add(new GqlArg(
+                name: an.attribute("name"), type: an.attribute("type") ?: "String",
+                required: "true".equals(an.attribute("required"))))
+        art.rootQueries.put(qn.attribute("name"), rq)
     }
 
     private static Integer asInt(String s) { return (s != null && !s.isEmpty()) ? Integer.valueOf(s) : (Integer) null }
