@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/service-definition-3.xsd">
+    <!-- The /graphql endpoint's service layer. execute#Query runs a query through the engine
+         (schema + governor + executor); get#Sdl publishes the SDL for tooling/introspection. -->
+
+    <service verb="execute" noun="Query" authenticate="true" allow-remote="true">
+        <description>Execute a GraphQL query. Returns the Shopify-shaped envelope: data, errors
+            (each {message, extensions.code}), and extensions.cost.</description>
+        <in-parameters>
+            <parameter name="query" required="true"/>
+            <parameter name="variables" type="Map"/>
+            <parameter name="operationName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="data" type="Map"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="extensions" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script>
+                def result = new org.moqui.gql.GqlEngine(ec).execute(query, (Map) variables, operationName)
+                data = result.data
+                errors = result.errors
+                extensions = result.extensions
+            </script>
+        </actions>
+    </service>
+
+    <service verb="get" noun="Sdl" authenticate="false" allow-remote="true">
+        <description>Published GraphQL SDL for the curated read schema.</description>
+        <out-parameters><parameter name="sdl"/></out-parameters>
+        <actions>
+            <script>
+                def built = ec.factory.getToolFactory("GraphQL").getInstance()
+                sdl = new graphql.schema.idl.SchemaPrinter().print(built.schema)
+            </script>
+        </actions>
+    </service>
+</services>

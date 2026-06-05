@@ -50,6 +50,8 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     final int maxDepth, maxCost, maxFirst, serviceBatchKeyLimit, maxInventoryKeys, unindexedFilterPenalty, serviceFixedCost
     private final long wallClockBudgetMs
     private final long deadlineNanos
+    /** Static cost estimate computed during the pre-execution walk; read by the engine for extensions.cost. */
+    volatile long estimatedCost = 0L
     private static final long COST_CEILING = 100_000_000L
 
     GovernorInstrumentation(ExecutionContext ec, BuiltSchema built, Map<String, Integer> cfg) {
@@ -85,6 +87,7 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
         Walk w = new Walk(vars: gqlCtx.getCoercedVariables().toMap(), frags: gqlCtx.getFragmentsByName())
         this.currentVars = w.vars
         long cost = w.cost(op.getSelectionSet(), built.schema.getQueryType(), 0, 1L)
+        this.estimatedCost = cost
 
         if (w.maxDepthSeen > maxDepth)
             w.errors.add(err("query depth " + w.maxDepthSeen + " exceeds max " + maxDepth, "DEPTH_EXCEEDED",

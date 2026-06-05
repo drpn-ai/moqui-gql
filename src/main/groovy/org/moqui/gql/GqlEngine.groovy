@@ -64,11 +64,12 @@ class GqlEngine {
     private static String sysOr(String n, String d) { String v = System.getProperty(n); return v != null ? v : d }
 
     Map execute(String query, Map variables, String operationName) {
+        long startMs = System.currentTimeMillis()
         List<NestedEdgeMeta> metas = nestedEdgeMetas()
         GraphQLSchema executable = withFetchers(metas)
         // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB)
-        GraphQL graphQL = GraphQL.newGraphQL(executable)
-                .instrumentation(new GovernorInstrumentation(ec, built, govCfg)).build()
+        GovernorInstrumentation governor = new GovernorInstrumentation(ec, built, govCfg)
+        GraphQL graphQL = GraphQL.newGraphQL(executable).instrumentation(governor).build()
         ExecutionInput.Builder inB = ExecutionInput.newExecutionInput().query(query)
                 .dataLoaderRegistry(buildRegistry(metas))
         if (variables != null) inB.variables(variables)
@@ -76,7 +77,54 @@ class GqlEngine {
         ExecutionInput input = inB.build()
         // decision 10: one read-only transaction on the calling thread
         ExecutionResult er = (ExecutionResult) ec.transaction.runUseOrBegin(queryTimeoutSeconds, "gql execute error", { graphQL.execute(input) })
-        return [data: er.getData(), errors: er.getErrors().collect { [message: it.getMessage(), extensions: it.getExtensions()] }]
+
+        Object data = er.getData()
+        List errors = er.getErrors().collect { [message: it.getMessage(), extensions: it.getExtensions()] }
+        long cost = governor.estimatedCost
+        long durationMs = System.currentTimeMillis() - startMs
+        int rows = countRows(data)
+        // Shopify-shaped cost. Phase 1: actualQueryCost == requested (not separately measured);
+        // throttleStatus is STATIC (currentlyAvailable == maximumAvailable) — no fake decrementing bucket.
+        int maxCost = govCfg.maxCost
+        Map extensions = [cost: [
+                requestedQueryCost: cost, actualQueryCost: cost,
+                throttleStatus: [maximumAvailable: maxCost, currentlyAvailable: maxCost,
+                                 restoreRate: (sysOr("gql.throttleRestoreRate", "50")) as int]]]
+        writeQueryLog(query, cost, rows, durationMs, errors)
+        return [data: data, errors: errors, extensions: extensions]
+    }
+
+    /** Best-effort row count from the result tree: each Map element of any list (edges/plain lists). */
+    private int countRows(Object o) {
+        if (!(o instanceof Map)) return 0
+        int sum = 0
+        for (Object v in ((Map) o).values()) {
+            if (v instanceof List) { for (Object e in (List) v) { if (e instanceof Map) { sum++; sum += countRows(e) } } }
+            else if (v instanceof Map) sum += countRows(v)
+        }
+        return sum
+    }
+
+    /** One observability row per request, in its own transaction — never fails the user's request. */
+    private void writeQueryLog(String query, long cost, int rows, long durationMs, List errors) {
+        try {
+            String verdict = errors.isEmpty() ? "ALLOWED" : "REJECTED"
+            String rejectReason = null
+            if (!errors.isEmpty()) {
+                def ex = errors.get(0)?.extensions
+                rejectReason = (ex?.code) ?: errors.get(0)?.message
+            }
+            String q = query != null && query.length() > 4000 ? query.substring(0, 4000) : query
+            ec.transaction.runRequireNew(30, "gql query-log error", {
+                ec.entity.makeValue("moqui.gql.GqlQueryLog").setAll([
+                        queryDate: ec.user.nowTimestamp, userId: ec.user.userId,
+                        callerProfile: "default", verdict: verdict, rejectReason: rejectReason,
+                        estimatedCost: cost, rowsFetched: rows, durationMs: durationMs, queryText: q])
+                        .setSequencedIdPrimary().create()
+            })
+        } catch (Throwable t) {
+            ec.logger.warn("gql: failed to write GqlQueryLog: " + t.message)
+        }
     }
 
     /** Resolve batching metadata for every nested has-many (list) edge from the Moqui relationship model. */

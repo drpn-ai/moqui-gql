@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/entity-definition-3.xsd">
+    <!-- Observability: one row per GraphQL request (verdict/cost/rows/duration). Drives threshold
+         tuning and reveals which agent queries get rejected. Written in its own transaction so a log
+         failure never fails the user's request. -->
+    <entity entity-name="GqlQueryLog" package="moqui.gql">
+        <field name="queryLogId" type="id" is-pk="true"/>
+        <field name="queryDate" type="date-time"/>
+        <field name="userId" type="id"/>
+        <field name="callerProfile" type="text-short"/>
+        <field name="verdict" type="text-short"/>
+        <field name="rejectReason" type="text-medium"/>
+        <field name="estimatedCost" type="number-integer"/>
+        <field name="rowsFetched" type="number-integer"/>
+        <field name="durationMs" type="number-integer"/>
+        <field name="queryText" type="text-very-long"/>
+        <index name="GQL_QLOG_DATE"><index-field name="queryDate"/></index>
+    </entity>
+</entities>
