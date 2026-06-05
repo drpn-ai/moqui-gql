@@ -18,13 +18,25 @@ Each example carries:
 - **Returns** — the expected response shape (abbreviated).
 - **Maps to** — backing entity / view-entity / service.
 - **Kinds** — field kinds exercised: `[DB]` entity field, `[VIEW]` view-entity type, `[SERVICE]`
-  service-backed resolver, `[SEARCH]` index-backed, `[AGG]` aggregation.
+  service-backed resolver, `[AGG]` aggregation (deferred — see Q2).
 - **Cost** — `cheap` (indexed, bounded) · `moderate` (bounded nested lists) · `high` (capped,
   watch fan-out) · `rejected` (must be blocked by the governor).
 - **Test asserts** — what an automated test verifies. This is why the catalog exists.
 
 Cost classes map to governance: `cheap`/`moderate`/`high` must ALLOW and return; `rejected` must
 return a structured, agent-actionable error (see §N).
+
+**Resolved decisions baked into these examples (see requirements.md Part 4):**
+- **All reads are DB-backed (Q1)** — no search-index entry point; product queries are structured
+  DB filters, full-text search stays on existing Solr endpoints.
+- **Analytics deferred (Q2)** — §K is a later opportunity, not initial scope.
+- **Declare-and-control filtering (Q3)** — only schema-declared fields are filterable/sortable,
+  each with an allowed operator set; undeclared/arbitrary filters are rejected (§N2).
+- **Relay connections (Q4)** — every list field is a connection:
+  `field(first, after) { edges { node { … } } pageInfo { hasNextPage endCursor } }`. For
+  readability the nested examples below use the shorthand `field(first:N){ … }` to mean the
+  `edges { node { … } }` selection; top-level feeds (§A2, §M) show the full connection form.
+- **External-id is first-class (Q5)** — see §J.
 
 ---
 
@@ -140,15 +152,19 @@ return a structured, agent-actionable error (see §N).
 
 ---
 
-## F. Catalog & search (index-backed — requirements Q1)
+## F. Catalog (DB-backed structured filters — Q1 resolved: DB only)
 
-### F1 — Product search by keyword/category/SKU
+### F1 — Product lookup by category / identification / type (structured DB filter)
 ```graphql
-{ productSearch(query:"hoodie", category:"TOPS", first:20){ productId productName sku detailImageUrl } }
+{ products(filter:{ primaryCategoryId:"TOPS", productTypeId:"FINISHED_GOOD" }, first:20){
+    edges{ node{ productId productName identifications(first:5){ type value } } }
+    pageInfo{ hasNextPage endCursor } } }
 ```
-**Maps to:** `OmsProduct` Solr/ElasticSearch index (keyword, category facet, SKU/UPC). **Kinds:** `[SEARCH]` · **Cost:** cheap (index, not SQL scan)
-**Test asserts:** keyword matches; category facet filters; resolves against index, not a DB table scan.
-**Decision dependency:** Q1 (search-backed vs DB-backed) must be resolved before this is testable.
+**Maps to:** Product + GoodIdentification (SKU/UPC), filtered on declared+indexed fields. **Kinds:** `[DB]` · **Cost:** cheap
+**Test asserts:** filters by declared fields (category/type); look up by `identifications.value` = SKU works; only declared-filterable fields accepted (others → §N2).
+**Note (Q1):** keyword / faceted **full-text** product search is NOT exposed via GraphQL — it stays
+on the existing Solr endpoints (`run#SolrQuery`, facet autocomplete). GraphQL does structured DB
+filtering only.
 
 ### F2 — Product detail
 ```graphql
@@ -203,16 +219,17 @@ return a structured, agent-actionable error (see §N).
 
 ---
 
-## K. Analytics / BI — GREENFIELD (requirements Q2)
-> `oms-bi` has fact/dimension tables but **no query API today** — consumers cannot ask these
-> questions via any endpoint. This is a build-new opportunity, not a migration. Pending Q2.
+## K. Analytics / BI — DEFERRED (Q2 resolved: pick up later)
+> **Out of the initial scope.** We revisit analytics after we have good usage examples from the
+> user group. `oms-bi` has fact/dimension tables but **no query API today**, so this is a clean
+> build-new opportunity when we get to it — kept here only to record the shape.
 ```graphql
+# illustrative only — NOT in initial scope
 { fulfillmentMetrics(facilityId:"WH1", dateFrom:"2026-05-01", dateTo:"2026-05-31", groupBy:DAY){
     date unitsShipped avgFulfillmentHours cancelRate } }
 ```
-**Maps to:** `OrderItemFulfillmentFact` (aggregated). **Kinds:** `[AGG]` · **Cost:** high (aggregation; distinct cost model)
-**Other facts already answer:** cancel rate, return rate (`ReturnItemFact`), inventory velocity (`InventoryItemDetailFact`), carrier performance.
-**Test asserts:** (when in scope) group-by buckets sum correctly vs raw fact rows.
+**Maps to:** `OrderItemFulfillmentFact` (aggregated). **Kinds:** `[AGG]` · **Cost:** high (distinct cost model)
+**Facts that will back it later:** cancel rate, return rate (`ReturnItemFact`), inventory velocity (`InventoryItemDetailFact`), carrier performance.
 
 ---
 
@@ -233,15 +250,16 @@ return a structured, agent-actionable error (see §N).
 
 ---
 
-## M. Partner feeds (cursor pagination — requirements Q4)
+## M. Partner feeds (Relay connection — Q4 resolved: in scope)
 ```graphql
 { orders(filter:{ statusId:"ORDER_APPROVED" }, first:100, after:"$cursor"){
     pageInfo{ hasNextPage endCursor }
-    id externalId shipGroups(first:10){ facility{ id } items(first:100){ productId quantity } } } }
+    edges{ cursor node{
+      id externalId
+      shipGroups(first:10){ edges{ node{ facility{ id } items(first:100){ edges{ node{ productId quantity } } } } } } } } } }
 ```
 **Maps to:** `get#BrokeredOrders` feed pattern; `WebhookOrderStatus` DataDocument shape. **Kinds:** `[DB][VIEW]` · **Cost:** high (capped)
-**Test asserts:** cursor pages don't overlap or skip; `hasNextPage` false on last page; stable ordering.
-**Decision dependency:** Q4 (Relay connections in phase 1).
+**Test asserts:** cursor pages don't overlap or skip; `hasNextPage` false on last page; stable ordering; `edges[].cursor` round-trips as `after`.
 
 ---
 
@@ -250,7 +268,7 @@ return a structured, agent-actionable error (see §N).
 | # | Query | Expected error (agent-actionable) |
 |---|-------|-----------------------------------|
 | N1 | `{ orders(first:1000){ items(first:1000){ adjustments(first:1000){ id } } } }` | `query cost 1,000,000,000 exceeds max 1000` |
-| N2 | `{ orders(filter:{ orderName:"Gift" }, first:50){ id } }` | `filter field 'orderName' is not indexed — use statusId/placedDate or request an index` |
+| N2 | `{ orders(filter:{ orderName:"Gift" }, first:50){ id } }` | `filter field 'orderName' is not declared filterable — allowed: statusId, placedDate, customerId` (Q3 declare-and-control) |
 | N3 | `{ orders { items { productId } } }` | `list field 'items' requires 'first:' (≤100)` |
 | N4 | query depth 8 | `depth 8 exceeds max 6` |
 
@@ -260,32 +278,33 @@ return a structured, agent-actionable error (see §N).
 
 ## Coverage matrix (domain × capability)
 
-| Domain | by-id | list+filter | nested | computed | view | search | agg | ext-id | feed |
-|---|---|---|---|---|---|---|---|---|---|
-| Order | A1 | A2 | A1 | A1 | A1 | — | K | J | M |
-| Shipment | B1 | — | B1 | — | B1 | — | — | — | M |
-| Picklist/Pick | B4 | B3 | B4 | — | B3,B4 | — | — | — | — |
-| Returns | — | C1 | C1 | — | — | — | K | C1 | — |
-| Transfer/PO | D2 | D1 | D1,D2 | — | D1 | — | — | — | — |
-| Inventory/ATP | — | — | — | E1,E2 | E3 | — | E3 | — | — |
-| Catalog | F2 | — | F2 | — | F2 | F1 | — | F2 | — |
-| Facility/Store | G1 | — | G1 | — | G1 | — | — | — | — |
-| CycleCount | H1 | — | H1 | — | — | — | — | — | — |
-| Routing | I1 | — | I1 | — | I1 | — | — | — | — |
+| Domain | by-id | list+filter | nested | computed | view | ext-id | feed |
+|---|---|---|---|---|---|---|---|
+| Order | A1 | A2 | A1 | A1 | A1 | J | M |
+| Shipment | B1 | — | B1 | — | B1 | — | M |
+| Picklist/Pick | B4 | B3 | B4 | — | B3,B4 | — | — |
+| Returns | — | C1 | C1 | — | — | C1 | — |
+| Transfer/PO | D2 | D1 | D1,D2 | — | D1 | — | — |
+| Inventory/ATP | — | — | — | E1,E2 | E3 | — | — |
+| Catalog | F2 | F1 | F2 | — | F2 | F2 | — |
+| Facility/Store | G1 | — | G1 | — | G1 | — | — |
+| CycleCount | H1 | — | H1 | — | — | — | — |
+| Routing | I1 | — | I1 | — | I1 | — | — |
 
-Empty cells = either not applicable or out of scope (e.g. analytics gated by Q2).
+Empty cells = not applicable. **Analytics/aggregation (§K) and full-text search are out of the
+initial scope** (Q1: DB-only; Q2: analytics deferred), so they are not columns here.
 
 ---
 
-## Open decisions these examples depend on (see requirements.md Part 4)
+## Decisions baked in (resolved 2026-06-03 — see requirements.md Part 4)
 
-- **Q1** — search-backed vs DB-backed reads → blocks F1.
-- **Q2** — analytics/aggregation in scope → blocks K.
-- **Q3** — filter operator expressiveness → shapes B3, all `filter:` inputs.
-- **Q4** — Relay connections in phase 1 → blocks M's `pageInfo`.
-- **Q5** — external-id lookup as first-class → enables J.
+- **Q1 — DB-backed only.** F1 is a structured DB filter; full-text search stays on Solr endpoints.
+- **Q2 — analytics deferred.** §K illustrative only, out of initial scope.
+- **Q3 — declare-and-control.** Only declared fields filter/sort, with allowed operators (§N2).
+- **Q4 — Relay connections in scope.** List fields are connections (§M full form; nested examples shorthand).
+- **Q5 — external-id is a must-have.** §J first-class.
 
 ## Out of scope (not represented as queries)
-Writes/mutations, `unigate` RPC (rate/label/refund/email), print/export (PDF/CSV), inbound
-webhooks (Shopify/ADP/AfterShip), live external assembly (Shopify GraphQL pass-through), raw
-Solr pass-through.
+Writes/mutations, analytics/aggregation (deferred), full-text/faceted Solr search, `unigate` RPC
+(rate/label/refund/email), print/export (PDF/CSV), inbound webhooks (Shopify/ADP/AfterShip), live
+external assembly (Shopify GraphQL pass-through).

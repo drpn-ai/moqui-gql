@@ -302,20 +302,43 @@ Cautionary note from the connector: it *reads* `currentlyAvailable` and does not
   calls; a view-entity-backed type returns joined fields and is filter-cost-classified
   from its member entities.
 
+## Resolved scope decisions (Q1–Q5, 2026-06-03)
+
+Settled after reverse-engineering the existing Maarg surface (see `requirements.md`):
+
+- **Q1 — DB-backed only.** All reads hit the database with the index-aware cost model. **No
+  search-index (Solr/ElasticSearch) entry point.** Full-text/faceted product search stays on the
+  existing Solr endpoints; GraphQL does structured DB filtering. (Removes the search-vs-DB fork.)
+- **Q2 — Analytics deferred.** No aggregation (SUM/COUNT/group-by/time-series) in initial scope;
+  revisited after user-group usage examples. `oms-bi` facts are the future source.
+- **Q3 — Declare-and-control filtering.** A field is filterable/sortable only if the schema
+  artifact declares it, and the declaration controls *how*: allowed operators per field, value
+  constraints, required index backing, `first:` caps. Arbitrary-field filtering is rejected. This
+  extends the schema layer (decision 5) and is the analyzer's primary control surface.
+- **Q4 — Relay connections in initial scope.** List fields are cursor connections
+  (`edges { node }`, `pageInfo { hasNextPage endCursor }`, `first`/`after`) — not deferred.
+- **Q5 — External-id lookup is a must-have.** First-class `byExternalId` /
+  `byIdentification(type, value)` entry points + an `identifications` edge on core types.
+
 ## Phasing
 
 - **Phase 1 (internal):** schema layer (entity-backed + view-entity-backed +
-  service-backed resolvers; type-B DataDocument optional), SDL/introspection, analyzer
-  (structural + cost + index), batched executor, runtime guards (timeout, row
-  cap, wall-clock), static caller profiles, observability.
+  service-backed resolvers; declared+operator-controlled filter/sort — Q3; type-B DataDocument
+  optional), SDL/introspection, analyzer (structural + cost + index), batched executor,
+  **Relay connections (Q4)**, **external-id lookup (Q5)**, runtime guards (timeout, row cap,
+  wall-clock), static caller profiles, observability. **DB-backed only (Q1).**
 - **Phase 2 (agents/partners):** leaky-bucket rate budget, persisted-query
   allow-lists, partner-facing policy profiles.
+- **Later (post user-group examples):** analytics/aggregation (Q2).
 
 ## Out of scope
 
 - Mutations (writes go through normal Moqui services).
 - Open traversal over the raw entity model (rejected in favor of curated graph).
 - Auto-generating the whole graph from the entity model (leaks raw data model).
+- **Analytics / aggregation (Q2)** — deferred until user-group usage examples.
+- **Full-text / faceted Solr search (Q1)** — stays on existing Solr endpoints; GraphQL is
+  DB-backed structured filtering only.
 - **Live external assembly (category C)** — Shopify/NetSuite live calls
   (`ShopifyOrderServices.get#OrderDetails`) belong to a federation layer, not this
   DB-backed graph. Consumers needing live external data call those services directly.
@@ -327,7 +350,9 @@ Cautionary note from the connector: it *reads* `currentlyAvailable` and does not
   tests.
 - Exact `graphql/*.graphql.xml` schema-artifact syntax (incl. `resolver-service` +
   view-entity type attributes — decision 12).
-- Cursor encoding scheme for connection pagination.
+- Cursor encoding scheme for Relay connection pagination (now phase 1 — Q4).
+- Per-field allowed-operator declaration syntax + how it generates the filter input types (Q3).
+- External-id / `byIdentification` resolver + `identifications` edge details (Q5).
 - How DataDocument-backed (type B) fields participate in cost estimation.
 - Parent-key → service-input mapping convention for service-backed resolvers, and the
   batch (key-list) form a resolver-service must expose to be used inside a list.

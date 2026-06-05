@@ -19,6 +19,17 @@
 - **Do not run `./gradlew build`** broadly. Use the narrow per-component test task only: `./gradlew :runtime:component:moqui-graphql:test`. Running it counts as "explicitly asked" because this plan asks for it in the verify steps.
 - Commit after every green step.
 
+> **Scope updates — decisions Q1–Q5 resolved (2026-06-03), not yet threaded through every task below.**
+> This plan predates the resolutions in `requirements.md` Part 4 / `design.md`. Before execution it
+> must absorb: **(Q4) Relay connections** — list fields become `edges{node}` + `pageInfo` +
+> `first/after` (replaces the bare `first:`/`maxRows` lists in Tasks 7/9; add cursor encode/decode +
+> connection wrapper types); **(Q5) external-id lookup** — add `byExternalId`/`byIdentification`
+> root fields + an `identifications` edge (new task); **(Q3) declare-and-control filtering** — the
+> schema artifact declares per-field allowed operators, and the filter input + analyzer enforce them
+> (extends Tasks 1/3/6/10); **(Q1) DB-backed only** — no search-index path (already true here);
+> **(Q2) analytics deferred** — no aggregation tasks. These are recorded now; the full task-level
+> rewrite happens when we move from requirements/examples into implementation.
+
 ---
 
 ## File Structure
@@ -1955,8 +1966,9 @@ git -C runtime/component/moqui-graphql commit -m "feat: service-backed resolver 
 - Persisted/allow-listed queries via `graphql-java` `PersistedQuerySupport`.
 - Per-caller field/type visibility + party/row-scope population of `ScopeFilter` (decision 11).
 - Hard wall-clock interruption (phase 1 records elapsed + relies on `queryTimeout` for hard stops).
-- Cursor-based (Relay) connection pagination — phase 1 uses `first:`/`maxRows` only.
 - DataDocument-backed (type B) heavy types — schema layer supports it; wire when a real heavy report needs it.
+- Analytics / aggregation (Q2) — deferred until user-group usage examples.
+- Full-text / faceted Solr search (Q1) — stays on existing Solr endpoints; GraphQL is DB-backed only.
 
 ## Self-review notes (author)
 

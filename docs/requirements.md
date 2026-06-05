@@ -62,20 +62,22 @@ Each is evidenced by existing usage.
 2. **Rich filtering:** status, facility, productStore, type/classification, by-identifier,
    multi-value (IN), and **date-range** (entryDate/orderDate/completed/cancelled/approved are
    everywhere). Date-range and status are the most common.
-3. **Dynamic, field-driven filter + multi-sort.** Gorjana's `PickProfileCondition`
-   (`fieldName` + `operator` + `value` + `fieldType`, FILTER vs SORT_BY) proves clients build
-   UIs that *generate* arbitrary filter/sort. The filter input must be expressive
-   (operators, multiple fields, ordered sort). **This is the single biggest pull on the cost
-   analyzer** — arbitrary filter fields = unindexed-filter risk.
-4. **Pagination.** `viewIndex`/`viewSize` used pervasively; cursor (`after`/`pageInfo`)
-   needed for stable sync feeds (Shopify connector pattern). Strengthens the case for Relay
-   connections in phase 1.
-5. **Full-text / faceted search.** Solr/ElasticSearch indexes Products (keyword, category,
-   feature, SKU/UPC), Orders (status, fulfillmentStatus), Inventory (facility/ATP). There is a
-   `run#SolrQuery` raw pass-through and facet autocomplete. Consumers already depend on search,
-   not just SQL filters. **See Decision Q1.**
-6. **Aggregation / analytics.** BI facts + DataDocument aggregates (SUM/COUNT/COUNT-DISTINCT:
-   productCount, orderCount, QOH totals, fulfillment metrics). **See Decision Q2.**
+3. **Declared, operator-controlled filter + multi-sort (Q3 RESOLVED).** Gorjana's
+   `PickProfileCondition` (`fieldName` + `operator` + `value`, FILTER vs SORT_BY) shows clients
+   build UIs that generate filter/sort. We support this but **declare-and-control**: only
+   schema-declared fields are filterable/sortable, each with an allowed operator set, value
+   constraints, and required index backing. Arbitrary-field filtering is rejected — this both
+   serves the use case and bounds the cost analyzer's exposure.
+4. **Relay connections (Q4 RESOLVED — in scope).** `viewIndex`/`viewSize` and the Shopify cursor
+   pattern are pervasive. List fields are cursor connections (`edges { node }`,
+   `pageInfo { hasNextPage endCursor }`, `first`/`after`) from the start.
+5. **Reads are DB-backed (Q1 RESOLVED).** GraphQL product/order queries are **structured DB
+   filters** (category, identification/SKU, productType, status), index-aware. Full-text /
+   faceted **Solr search stays on the existing endpoints** — not exposed through GraphQL. No
+   search-index entry point in scope.
+6. **Aggregation / analytics — DEFERRED (Q2 RESOLVED).** BI facts (SUM/COUNT/time-series) are a
+   later opportunity, picked up after we have good usage examples from the user group. Not in the
+   initial scope.
 7. **Computed / service-backed fields.** `itemFulfillmentStatus`, `customerName`, ATP, online
    ATP. Widespread — validates decision 12.
 8. **View-entity-backed types are the norm, not the exception.** `ReadyToPickWarehouseOrder`,
@@ -86,9 +88,10 @@ Each is evidenced by existing usage.
    `netsuiteOrderName`), client-only types (`PickProfile*`, `AdpWorkerHistory`), client-only
    entry points (`readyToPickOrders`). Schema artifacts are authored per deployment with
    per-client field/type visibility. Validates decisions 5 + 11.
-10. **External-ID lookup.** `OrderHeader.externalId`, `Facility.externalId`, and
-    `OrderIdentification` (netsuiteOrderName, shopifyOrderId) are used for all multi-system sync.
-    Need: query by external id, and expose `identifications` as an edge. **New requirement.**
+10. **External-ID lookup (Q5 RESOLVED — must-have, in scope).** `OrderHeader.externalId`,
+    `Facility.externalId`, and `OrderIdentification` (netsuiteOrderName, shopifyOrderId) drive all
+    multi-system sync. First-class `byExternalId` / `byIdentification(type, value)` entry points +
+    an `identifications` edge on core types.
 11. **Status history, not just current status.** OrderStatus/ShipmentStatus/OrderItemChange.
     Expose status-history edges.
 12. **Purpose-based contact mechs.** Billing/shipping/notification addresses, phones, emails by
@@ -119,28 +122,26 @@ nested traversal; external-id lookup; status history; computed fields.
 
 ---
 
-## Part 4 — New decisions the existing surface forces (open, for the spec)
+## Part 4 — Decisions (RESOLVED 2026-06-03)
 
-These are NOT yet resolved in the design spec. The existing surface reveals them.
-
-- **Q1 — Search-backed vs DB-backed reads.** Products/Orders are browsed via Solr/ElasticSearch
-  (keyword, facets), but our design is DB-entity-backed with index-aware cost. Options: (a)
-  GraphQL filters always hit the DB (our cost model applies); (b) add a search-backed entry
-  point for indexed types (Product, Order) that resolves against the index; (c) hybrid — search
-  for discovery, DB for detail. This is a real architecture fork with cost-governance
-  implications.
-- **Q2 — Is analytics/aggregation in scope?** BI facts need SUM/COUNT/time-series/rollups. Our
-  phase-1 design is row projection, not aggregation. Decide: aggregate fields/queries in scope,
-  or analytics stays a separate BI/reporting concern (likely defer, but decide explicitly).
-- **Q3 — How expressive is the filter input?** Gorjana's condition model wants
-  field+operator+value+sort. More operators = more unindexed-filter surface = more load on the
-  cost analyzer. Decide the operator set and whether arbitrary fields are filterable or only
-  declared-filterable ones (the spec already leans to declared-filterable — confirm against this
-  pressure).
-- **Q4 — Relay connections in phase 1?** Feeds + view-index pagination + the Shopify cursor
-  pattern all argue for cursor connections now rather than phase 2. Revisit the earlier deferral.
-- **Q5 — External-id as a first-class lookup.** Add `byExternalId` entry points and an
-  `identifications` edge to the core types.
+- **Q1 — All reads are DB-backed.** GraphQL queries/filters hit the database with the
+  index-aware cost model. There is **no search-index (Solr/ElasticSearch) entry point** in scope.
+  Keyword/full-text product search stays on the existing Solr endpoints; GraphQL product queries
+  are **structured DB filters** (by category, identification/SKU, productType, status), not
+  full-text. (Simplifies the design — removes the search-vs-DB fork entirely.)
+- **Q2 — Analytics is DEFERRED.** `oms-bi` aggregation stays out for now; we pick it up **after
+  we have good usage examples from the user group**. No SUM/COUNT/group-by/time-series in the
+  initial scope.
+- **Q3 — Declare-and-control.** Nothing is filterable or sortable unless the schema artifact
+  **declares it**, and the declaration **controls how it may be used**: the permitted operators
+  per field (e.g. `eq`/`in` for an id, `eq`/`range` for a date), value constraints, required
+  index backing, and `first:` caps. Arbitrary-field filtering is rejected. This is the primary
+  control surface and feeds the cost analyzer directly.
+- **Q4 — Relay connections are IN the initial scope.** List fields are cursor-based connections
+  (`edges { node }`, `pageInfo { hasNextPage endCursor }`, `first`/`after`), not bare lists.
+- **Q5 — External-id lookup is a MUST-HAVE (initial scope).** First-class
+  `byExternalId` / `byIdentification(type, value)` entry points, plus an `identifications` edge on
+  the core types.
 
 ---
 
@@ -153,7 +154,7 @@ These are NOT yet resolved in the design spec. The existing surface reveals them
   …) → view-entity-backed types (decision 12), reuse the joins.
 - **Existing read services** (`get#SalesOrder`, `get#PickupOrders`, `get#BrokeredOrders`,
   `get#BopisInventory`, `get#ProductOnlineAtp`) → service-backed resolvers for computed shapes.
-- **BI facts/dimensions** → if analytics is in scope (Q2), these are the aggregate sources.
+- **BI facts/dimensions** → the aggregate sources for analytics **when we pick it up later** (Q2 deferred).
 
 ---
 
@@ -161,7 +162,7 @@ These are NOT yet resolved in the design spec. The existing surface reveals them
 
 The existing surface confirms the design direction and **validates decision 12 emphatically**
 (computed fields, view-entity types, and service-backed resolvers are the norm across the
-platform). It also surfaces **five new decisions** (Part 4) the spec must resolve — most
-importantly **search-vs-DB (Q1)** and **analytics scope (Q2)** — and **two concrete new
-requirements**: external-id lookup (Q5) and expressive dynamic filtering (Q3), the latter being
-the dominant new pressure on the cost analyzer.
+platform). The five surfaced decisions are now **resolved** (Part 4): **DB-backed only** (no
+search index), **analytics deferred**, **declare-and-control filtering**, **Relay connections in
+scope**, and **external-id as a must-have**. Net effect: a tighter, fully DB-backed initial scope
+with declared/controlled filtering and cursor pagination.
