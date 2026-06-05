@@ -44,6 +44,11 @@ test {
     systemProperty 'entity_ds_database', System.getProperty('entity_ds_database', 'hcsd_notnaked')
     systemProperty 'entity_ds_user', System.getProperty('entity_ds_user', 'moqui')
     systemProperty 'entity_ds_password', System.getProperty('entity_ds_password', 'moqui')
+    // Use an in-memory Bitronix journal for tests so the test ECF never touches runtime/txlog and
+    // cannot collide with a running notnaked server (or an overlapping test JVM) on the shared
+    // ${moqui.runtime}/txlog/btm*.tlog journal. Bitronix lets system props override its config file.
+    systemProperty 'bitronix.tm.journal', 'null'
+    systemProperty 'bitronix.tm.serverId', 'moqui-gql-test'
     classpath += files(sourceSets.main.output.classesDirs)
     classpath += files(projectDir.absolutePath)
     classpath = classpath.filter { it.exists() }

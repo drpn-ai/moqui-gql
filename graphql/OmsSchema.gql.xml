@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  GraphQL schema artifact (initial scope). Field/type names = OMS data model; query language is
+  Shopify-shaped (query: search string, sortKey+reverse, Relay connections). Entity names are the
+  HotWax/OFBiz model present in hcsd_notnaked. Grows toward docs/schema.graphql.
+-->
+<gql-schema>
+    <gql-type name="Order" entity-name="org.apache.ofbiz.order.order.OrderHeader">
+        <field name="orderId" entity-field="orderId" type="ID"/>
+        <field name="orderName" entity-field="orderName"/>
+        <field name="externalId" entity-field="externalId"/>
+        <field name="statusId" entity-field="statusId"/>
+        <field name="orderDate" entity-field="orderDate" type="DateTime"/>
+        <field name="grandTotal" entity-field="grandTotal" type="Decimal"/>
+        <field name="currencyUomId" entity-field="currencyUom"/>
+        <field name="productStoreId" entity-field="productStoreId"/>
+        <edge name="orderItems" entity-relationship="OrderItems" target-type="OrderItem" list="true"/>
+        <root-query name="order" by-pk="true" pk-arg="orderId" external-id="true"/>
+        <root-query name="orders" list="true"
+            search-keys="orderId:eq,in externalId:eq,in orderName:eq statusId:eq,in orderDate:gt,gte,lt,lte productStoreId:eq,in"
+            sort-keys="ORDER_DATE:orderDate ORDER_NAME:orderName GRAND_TOTAL:grandTotal ORDER_ID:orderId"/>
+    </gql-type>
+
+    <gql-type name="OrderItem" entity-name="org.apache.ofbiz.order.order.OrderItem">
+        <field name="orderId" entity-field="orderId" type="ID"/>
+        <field name="orderItemSeqId" entity-field="orderItemSeqId" type="ID"/>
+        <field name="productId" entity-field="productId"/>
+        <field name="quantity" entity-field="quantity" type="Int"/>
+        <field name="unitPrice" entity-field="unitPrice" type="Decimal"/>
+        <field name="statusId" entity-field="statusId"/>
+    </gql-type>
+</gql-schema>

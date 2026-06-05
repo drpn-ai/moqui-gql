@@ -13,5 +13,9 @@
     <default-property name="gql.maxRowsPerLevel" value="5000"/>
     <default-property name="gql.wallClockBudgetMs" value="30000"/>
     <default-property name="gql.useClone" value="true"/>
-    <!-- ToolFactory that builds + caches the schema at startup is registered in C2. -->
+
+    <!-- Builds + caches the GraphQLSchema (and cost model) at startup from graphql/*.gql.xml. -->
+    <tools>
+        <tool-factory class="org.moqui.gql.GqlToolFactory" init-priority="50"/>
+    </tools>
 </moqui-conf>
