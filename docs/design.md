@@ -123,11 +123,13 @@ consumers need falls into three categories:
   (`shipGroups`, `paymentPreferences`, `adjustments`, `statuses`, `items`, `returns`,
   `contactMechs`, …); its `<master>` blocks are already a curated nested shape. Fully
   covered by the entity-backed field/edge model.
-- **(B) Computed** — fields derived by Groovy logic over multiple entities. Real
+- **(B) Computed** — fields derived by genuine logic over multiple entities. Real
   examples: `itemFulfillmentStatus` (a state machine over approved/completed/cancelled
-  counts + returns, `ofbiz-oms-usl/.../OrderServices.xml:2861-2993`), `customerName`
-  (party→Person concat), `orderItemCompletedDatetime` (filtered status lookup). Also
-  heavy **view-entity** joins (`OrderItemDetail`, `ReturnItemView`).
+  counts + returns, `ofbiz-oms-usl/.../OrderServices.xml:2861-2993`),
+  `orderItemCompletedDatetime` (filtered status lookup). NOTE: `customerName` (party→Person
+  concat) is **not** in this category — a join + concat is leaf data (see the leaf-over-service
+  rule below), now `Order.billToCustomer`. Genuine joins use **view-entities**
+  (`OrderItemDetail`, `ReturnItemView`, `OrderBillToCustomer`).
 - **(C) Externally assembled** — live calls to Shopify/NetSuite (`ShopifyOrderServices.get#OrderDetails`).
 
 Design response — **three field kinds in the schema layer:**
@@ -153,6 +155,33 @@ resolver can do arbitrary expensive work the static cost model cannot see. There
 **(C) is explicitly out of scope** — live external enrichment belongs to a federation
 layer, not this DB-backed graph. A consumer needing live Shopify data calls the existing
 Shopify services directly.
+
+**Leaf-over-service rule (binding).** A field is service-backed **only when its value cannot
+be produced by a join/relationship plus a client-side transform of leaf columns.** Joins,
+lookups, and concatenations are **not** computation — they belong in the schema as
+entity/view-backed **leaf fields**, and the client composes the presentation. Service-backed
+is reserved for genuine computation (aggregations with business rules, state machines),
+external systems, or values with no stable column form.
+
+- *Counter-example, retired:* `Order.customerName` was service-backed (`get#OrderCustomerName`)
+  but is just `BILL_TO OrderRole → Person`, then `firstName + ' ' + lastName` — a join + concat.
+  It is now the view-backed has-one `Order.billToCustomer { partyId firstName lastName }`; the
+  client builds the display name. This drops a flat-25, analyzer-opaque cost to a deterministic
+  ~4 and removes a per-request service call.
+- *Legitimate service-backed:* `inventoryLevels` (ATP aggregation + safety-stock/store rules),
+  `itemFulfillmentStatus` (state machine), `Order.itemCount` (an aggregate count). These are not
+  expressible as a leaf join.
+
+Why it matters: leaf fields are **statically cost-analyzable and cheaper**; service-backed
+fields are an analyzer blind spot charged a flat high cost. Pushing presentation/derivation to
+the client keeps the cost model honest and the API a clean data graph.
+
+**PR-review checklist (service-backed fields).** For every `resolver-service` / `service="true"`:
+1. Is the value a join, lookup, or concatenation of existing columns? → make it a leaf
+   field/edge (view-entity if it needs joins), not service-backed.
+2. Is it a genuine aggregation/state-machine/external call? → service-backed is OK; ensure it is
+   DataLoader-batched inside lists and carries a high fixed cost.
+3. Does the service do any write or have side effects? → not allowed on the read graph.
 
 ### Governance layers (decision 4)
 

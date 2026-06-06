@@ -14,6 +14,7 @@ import org.moqui.context.ExecutionContext
 import org.moqui.gql.exec.ConnectionResolver
 import org.moqui.gql.exec.NestedConnectionLoader
 import org.moqui.gql.exec.NestedEdgeMeta
+import org.moqui.gql.exec.NestedSingleLoader
 import org.moqui.gql.exec.ServiceBackedLoader
 import org.moqui.gql.scope.ScopeFilters
 import org.moqui.impl.entity.EntityFacadeImpl
@@ -172,6 +173,12 @@ class GqlEngine {
             def parentEd = efi.getEntityDefinition(t.entityName)
             if (parentEd == null) continue
             for (GqlEdge e in t.edges.values()) {
+                if (e.single) {   // single-object (has-one) edge: explicit child entity + fk, no relationship
+                    out.add(new NestedEdgeMeta(typeName: t.name, edgeName: e.name, loaderName: t.name + "." + e.name,
+                            parentKeyField: e.parentKey ?: e.fk, childEntityName: e.childEntity,
+                            fkField: e.fk, intraGroupFields: new ArrayList<String>(), plain: false, single: true))
+                    continue
+                }
                 if (!e.list) continue
                 def ri = parentEd.getRelationshipInfo(e.entityRelationship)
                 if (ri == null || ri.keyMap == null || ri.keyMap.size() != 1) {
@@ -195,8 +202,10 @@ class GqlEngine {
     private DataLoaderRegistry buildRegistry(List<NestedEdgeMeta> metas) {
         DataLoaderRegistry reg = new DataLoaderRegistry()
         for (NestedEdgeMeta meta in metas) {
-            def loader = new NestedConnectionLoader(ec, meta.childEntityName, meta.fkField, meta.intraGroupFields,
-                    useClone, queryTimeoutSeconds, maxFirst, maxRowsPerLevel, meta.plain)
+            def loader = meta.single ?
+                    new NestedSingleLoader(ec, meta.childEntityName, meta.fkField, useClone, queryTimeoutSeconds, maxRowsPerLevel) :
+                    new NestedConnectionLoader(ec, meta.childEntityName, meta.fkField, meta.intraGroupFields,
+                            useClone, queryTimeoutSeconds, maxFirst, maxRowsPerLevel, meta.plain)
             reg.register(meta.loaderName, DataLoaderFactory.newMappedDataLoader(loader))
         }
         // one batched loader per service-backed field (decision 12), keyed by its resolver-in tuple

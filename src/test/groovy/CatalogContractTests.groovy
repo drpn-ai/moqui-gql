@@ -39,7 +39,7 @@ class CatalogContractTests extends Specification {
     def "A2 — open-orders queue page: orders(query, sortKey, first) -> edges{cursor,node} + pageInfo"() {
         when:
         def r = engine.execute('''query { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2) {
-            edges { cursor node { orderId orderName orderDate grandTotal customerName } }
+            edges { cursor node { orderId orderName orderDate grandTotal billToCustomer { firstName lastName } } }
             pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }''', [:], null)
         then:
         r.errors.isEmpty()
@@ -53,7 +53,7 @@ class CatalogContractTests extends Specification {
     def "L — order(orderId) with orderItems connection + identifications plain list + service field"() {
         when:
         def r = engine.execute('''query Q($id:ID!){ order(orderId:$id){
-            orderId orderName customerName
+            orderId orderName itemCount billToCustomer { firstName lastName }
             orderItems(first:5){ edges{ node{ orderItemSeqId productId quantity unitPrice } } }
             identifications(first:10){ orderIdentificationTypeId idValue } } }''', [id: orderWithItems], "Q")
         then:

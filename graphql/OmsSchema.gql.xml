@@ -14,11 +14,16 @@
         <field name="grandTotal" entity-field="grandTotal" type="Decimal"/>
         <field name="currencyUomId" entity-field="currencyUom"/>
         <field name="productStoreId" entity-field="productStoreId"/>
-        <!-- service-backed field (decision 12): value from a Moqui service, not a column. Opaque to
-             static cost; resolved through a batched DataLoader. (Contract: customerName @service.) -->
-        <field name="customerName" type="String"
-               resolver-service="GqlExampleServices.get#OrderCustomerName"
-               resolver-in="orderId" resolver-out="customerName"/>
+        <!-- service-backed field (decision 12): a genuine aggregation (count), not a leaf column or a
+             join — opaque to static cost, resolved through a batched DataLoader. -->
+        <field name="itemCount" type="Int"
+               resolver-service="GqlExampleServices.get#OrderItemCount"
+               resolver-in="orderId" resolver-out="itemCount"/>
+        <!-- has-one leaf object (was the service-backed customerName): the BILL_TO customer's leaf
+             columns via a 1:1 view; the client composes the display name. Deterministic cost, no
+             service call (leaf-over-service rule, design.md decision 12). -->
+        <edge name="billToCustomer" target-type="BillToCustomer" entity-name="moqui.gql.OrderBillToCustomer"
+              fk="orderId" single="true"/>
         <edge name="orderItems" entity-relationship="OrderItem" target-type="OrderItem" list="true"/>
         <!-- plain bounded list (not a connection): typed external ids for this order -->
         <edge name="identifications" entity-relationship="OrderIdentification" target-type="OrderIdentification"
@@ -43,6 +48,14 @@
     <gql-type name="OrderIdentification" entity-name="co.hotwax.order.OrderIdentification">
         <field name="orderIdentificationTypeId" entity-field="orderIdentificationTypeId" type="ID"/>
         <field name="idValue" entity-field="idValue"/>
+    </gql-type>
+
+    <!-- Leaf columns of an order's BILL_TO customer (view-backed). The client composes a display name
+         from firstName + lastName — we expose the data, not the presentation. -->
+    <gql-type name="BillToCustomer" entity-name="moqui.gql.OrderBillToCustomer">
+        <field name="partyId" type="ID"/>
+        <field name="firstName"/>
+        <field name="lastName"/>
     </gql-type>
 
     <gql-type name="OrderStatus" entity-name="org.apache.ofbiz.order.order.OrderStatus">

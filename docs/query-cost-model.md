@@ -53,7 +53,7 @@ depends on the **kind** of the field:
 | Single object (by-pk root, single edge, by-identification) | `1 + child` | `child` = cost of its sub-selection |
 | **Connection** (Relay list: `orders`, `orderItems`, `shipGroups`) | `eff × (1 + child)` | `eff` = effective page size (see §2.3); root connections add an unindexed-filter penalty (§2.4) |
 | **Plain bounded list** (`identifications`, `statuses`, …) | `eff × (1 + child)` | `eff` from `first` or the field's declared default |
-| **Service-backed field** (`Order.customerName`) | `serviceFixedCost` | flat; the sub-tree is not added (service scalars are leaves) |
+| **Service-backed field** (`Order.itemCount`) | `serviceFixedCost` | flat; the sub-tree is not added (service scalars are leaves) |
 | **Service-backed root** (`inventoryLevels`) | `serviceFixedCost + child` | the service result's fields are still costed |
 
 For a connection, `child` is the cost of the **node** sub-selection — the Relay plumbing
@@ -121,7 +121,7 @@ query {
     edges { node {
       orderId
       orderName
-      customerName                         # service-backed
+      itemCount                         # service-backed
       orderItems(first: 10) {
         edges { node { orderItemSeqId productId quantity } }
       }
@@ -136,12 +136,12 @@ Compute **bottom-up**:
 |---|---|---|---|
 | 1 | `OrderItem` node `{ orderItemSeqId, productId, quantity }` | 3 scalars | `3` |
 | 2 | `orderItems(first:10)` | connection: `eff=10`, `child=3` → `10 × (1+3)` | `40` |
-| 3 | `Order` node fields | `orderId`(1) + `orderName`(1) + `customerName`(**25**, service) + `orderItems`(40) | `67` |
+| 3 | `Order` node fields | `orderId`(1) + `orderName`(1) + `itemCount`(**25**, service) + `orderItems`(40) | `67` |
 | 4 | `orders(first:5)` | connection: `eff=5`, `child=67` → `5 × (1+67)` | **`340`** |
 
 **Verdict:** `340 ≤ maxCost (1000)` → **allowed**. The engine returns
 `extensions.cost.requestedQueryCost = 340`, and 340 points are debited from the caller's throttle
-bucket. Note the single service-backed field (`customerName`) contributes its flat `25` regardless of
+bucket. Note the single service-backed field (`itemCount`) contributes its flat `25` regardless of
 how cheap or expensive the underlying service actually is.
 
 *(Engine-confirmed: `requestedQueryCost = 340`.)*

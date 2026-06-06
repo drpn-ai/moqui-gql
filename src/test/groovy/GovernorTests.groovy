@@ -87,10 +87,10 @@ class GovernorTests extends Specification {
         given:
         System.setProperty("gql.serviceBatchKeyLimit", "5")   // fan-out 10 > 5
         when:
-        def r = new GqlEngine(ec).execute('query { orders(first:10){ edges{ node{ orderId customerName } } } }', [:], null)
+        def r = new GqlEngine(ec).execute('query { orders(first:10){ edges{ node{ orderId itemCount } } } }', [:], null)
         then:
         hasCode(r, "BATCH_LIMIT_EXCEEDED")
-        r.errors.find { it.extensions?.code == "BATCH_LIMIT_EXCEEDED" }.extensions.field == "customerName"
+        r.errors.find { it.extensions?.code == "BATCH_LIMIT_EXCEEDED" }.extensions.field == "itemCount"
         r.data?.orders == null
     }
 

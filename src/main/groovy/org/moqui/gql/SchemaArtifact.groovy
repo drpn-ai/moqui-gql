@@ -27,6 +27,12 @@ class GqlEdge {
     Integer costOverride = null
     String resolverService = null
     List<String> resolverIn = []
+    /** Single-object (has-one) edge: resolved by a batched WHERE fk IN(keys) against childEntity.
+     *  Explicit child entity + join field (no Moqui relationship needed); parentKey defaults to fk. */
+    boolean single = false
+    String childEntity = null
+    String fk = null
+    String parentKey = null
     boolean isServiceBacked() { return resolverService != null && !resolverService.isEmpty() }
     boolean isPlainList() { return list && "list".equals(kind) }
     boolean isConnection() { return list && !"list".equals(kind) }

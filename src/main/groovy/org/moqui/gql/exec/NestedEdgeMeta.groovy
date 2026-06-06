@@ -14,4 +14,5 @@ class NestedEdgeMeta {
     String fkField         // child field holding the parent key
     List<String> intraGroupFields // child PK minus the fk: natural order of children within a parent
     boolean plain          // true -> plain [Type!]! list; false -> Relay connection
+    boolean single         // true -> has-one (single object), batched first-row-per-parent
 }

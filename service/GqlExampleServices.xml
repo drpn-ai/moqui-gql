@@ -5,28 +5,18 @@
       whose value is produced by a Moqui service rather than read from a column. The schema artifact's
       resolver-service points here; the engine batches calls through a DataLoader.
     -->
-    <service verb="get" noun="OrderCustomerName" authenticate="false">
-        <description>BILL_TO customer display name for an order (service-backed field example).</description>
+    <!-- get#OrderCustomerName was RETIRED: customer name is a join + concat, not genuine computation,
+         so it is now the view-backed Order.billToCustomer leaf object (leaf-over-service, design.md
+         decision 12). A legitimate service-backed FIELD must be a real computation — e.g. an aggregate
+         like this item count, which is not a leaf column and not a simple relationship traversal. -->
+    <service verb="get" noun="OrderItemCount" authenticate="false">
+        <description>Count of items on an order — an aggregation (legitimate service-backed field example).</description>
         <in-parameters><parameter name="orderId" required="true"/></in-parameters>
-        <out-parameters>
-            <parameter name="customerName"/>
-            <parameter name="customerPartyId"/>
-        </out-parameters>
+        <out-parameters><parameter name="itemCount" type="Integer"/></out-parameters>
         <actions>
-            <entity-find entity-name="org.apache.ofbiz.order.order.OrderRole" list="billToList">
+            <entity-find-count entity-name="org.apache.ofbiz.order.order.OrderItem" count-field="itemCount">
                 <econdition field-name="orderId"/>
-                <econdition field-name="roleTypeId" value="BILL_TO_CUSTOMER"/>
-                <select-field field-name="partyId"/>
-            </entity-find>
-            <if condition="billToList">
-                <set field="customerPartyId" from="billToList[0].partyId"/>
-                <entity-find-one entity-name="org.apache.ofbiz.party.party.Person" value-field="person" cache="true">
-                    <field-map field-name="partyId" from="customerPartyId"/>
-                </entity-find-one>
-                <if condition="person">
-                    <set field="customerName" from="((person.firstName ?: '') + ' ' + (person.lastName ?: '')).trim()"/>
-                </if>
-            </if>
+            </entity-find-count>
         </actions>
     </service>
 

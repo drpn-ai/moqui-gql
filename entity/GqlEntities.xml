@@ -37,4 +37,24 @@
         <field name="profileId" type="id"/>
         <relationship type="one" related="moqui.gql.GqlCallerProfile"><key-map field-name="profileId"/></relationship>
     </entity>
+
+    <!-- The BILL_TO customer of an order, as leaf columns (orderId 1:1 -> Person name). Backs the
+         Order.billToCustomer has-one edge so clients read firstName/lastName and compose the display
+         name themselves — replacing the get#OrderCustomerName service-backed field (leaf-over-service). -->
+    <view-entity entity-name="OrderBillToCustomer" package="moqui.gql">
+        <member-entity entity-alias="ORD" entity-name="org.apache.ofbiz.order.order.OrderHeader"/>
+        <member-entity entity-alias="ROL" entity-name="org.apache.ofbiz.order.order.OrderRole" join-from-alias="ORD">
+            <key-map field-name="orderId"/>
+        </member-entity>
+        <member-entity entity-alias="PER" entity-name="org.apache.ofbiz.party.party.Person" join-from-alias="ROL">
+            <key-map field-name="partyId"/>
+        </member-entity>
+        <alias name="orderId" entity-alias="ORD"/>
+        <alias name="partyId" entity-alias="ROL"/>
+        <alias name="firstName" entity-alias="PER"/>
+        <alias name="lastName" entity-alias="PER"/>
+        <entity-condition>
+            <econdition entity-alias="ROL" field-name="roleTypeId" value="BILL_TO_CUSTOMER"/>
+        </entity-condition>
+    </view-entity>
 </entities>
