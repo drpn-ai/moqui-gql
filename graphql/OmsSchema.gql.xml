@@ -144,4 +144,28 @@
             <arg name="facilityIds" type="IDList"/>
         </root-query>
     </gql-type>
+
+    <gql-type name="Product" entity-name="org.apache.ofbiz.product.product.Product">
+        <field name="productId" type="ID"/>
+        <field name="productName"/>
+        <field name="productTypeId"/>
+        <field name="primaryProductCategoryId"/>
+        <field name="brandName"/>
+        <root-query name="product" by-pk="true" pk-arg="productId"/>
+        <root-query name="products" list="true"
+            search-keys="productId:eq,in productTypeId:eq,in primaryProductCategoryId:eq,in brandName:eq"
+            sort-keys="PRODUCT_NAME:productName PRODUCT_ID:productId"/>
+    </gql-type>
+
+    <gql-type name="Facility" entity-name="org.apache.ofbiz.product.facility.Facility">
+        <field name="facilityId" type="ID"/>
+        <field name="facilityName"/>
+        <field name="facilityTypeId"/>
+        <field name="parentFacilityId"/>
+        <field name="externalId"/>
+        <root-query name="facility" by-pk="true" pk-arg="facilityId" external-id="true"/>
+        <root-query name="facilities" list="true"
+            search-keys="facilityId:eq,in facilityTypeId:eq,in externalId:eq,in parentFacilityId:eq,in"
+            sort-keys="FACILITY_NAME:facilityName FACILITY_ID:facilityId"/>
+    </gql-type>
 </gql-schema>
