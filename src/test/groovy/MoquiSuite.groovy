@@ -10,7 +10,7 @@ import org.moqui.Moqui
         ExternalIdTests.class, ServiceBackedTests.class, ShipmentRootTests.class, InventoryLevelsTests.class,
         GovernorTests.class, EndpointTests.class, ScopeSeamTests.class, ConnectionWalkTests.class,
         CatalogContractTests.class, OrderDetailEdgesTests.class, ProductFacilityTests.class,
-        ThrottleGateTests.class, ThrottleE2ETests.class ])
+        ThrottleGateTests.class, ThrottleE2ETests.class, CallerProfileTests.class ])
 class MoquiSuite {
     @AfterAll
     static void destroyMoqui() { Moqui.destroyActiveExecutionContextFactory() }

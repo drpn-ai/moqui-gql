@@ -16,4 +16,25 @@
         <field name="queryText" type="text-very-long"/>
         <index name="GQL_QLOG_DATE"><index-field name="queryDate"/></index>
     </entity>
+
+    <!-- Phase-2 caller policy. A profile sets per-caller governor limits (null field = inherit the
+         global config default) and an optional row-scope (productStore). Absence of any profile row =
+         the global defaults (the engine treats a missing profile as "default"). -->
+    <entity entity-name="GqlCallerProfile" package="moqui.gql">
+        <field name="profileId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="maxCost" type="number-integer"/>
+        <field name="maxFirst" type="number-integer"/>
+        <field name="maxInventoryKeys" type="number-integer"/>
+        <field name="bucketSize" type="number-integer"/>
+        <field name="restoreRate" type="number-integer"/>
+        <field name="scopeProductStoreId" type="id"/>
+    </entity>
+
+    <!-- Maps a caller (userId) to a profile. No row -> the "default" profile (global config). -->
+    <entity entity-name="GqlCallerProfileMember" package="moqui.gql">
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="profileId" type="id"/>
+        <relationship type="one" related="moqui.gql.GqlCallerProfile"><key-map field-name="profileId"/></relationship>
+    </entity>
 </entities>

@@ -68,33 +68,65 @@ class GqlEngine {
 
     Map execute(String query, Map variables, String operationName) {
         long startMs = System.currentTimeMillis()
-        List<NestedEdgeMeta> metas = nestedEdgeMetas()
-        GraphQLSchema executable = withFetchers(metas)
-        // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB)
-        GovernorInstrumentation governor = new GovernorInstrumentation(ec, built, govCfg)
-        GraphQL graphQL = GraphQL.newGraphQL(executable).instrumentation(governor).build()
-        ExecutionInput.Builder inB = ExecutionInput.newExecutionInput().query(query)
-                .dataLoaderRegistry(buildRegistry(metas))
-        if (variables != null) inB.variables(variables)
-        if (operationName) inB.operationName(operationName)
-        ExecutionInput input = inB.build()
-        // decision 10: one read-only transaction on the calling thread
-        ExecutionResult er = (ExecutionResult) ec.transaction.runUseOrBegin(queryTimeoutSeconds, "gql execute error", { graphQL.execute(input) })
+        // phase-2 caller policy: a profile overrides governor/throttle limits + may activate a row scope
+        Map<String, Integer> effectiveCfg = govCfg
+        Map profile = resolveCallerProfile()
+        String scopeStore = null
+        if (profile != null) {
+            effectiveCfg = new LinkedHashMap<String, Integer>(govCfg)
+            for (String k in ["maxCost", "maxFirst", "maxInventoryKeys", "bucketSize", "restoreRate"]) {
+                def v = profile.get(k); if (v != null) effectiveCfg.put(k, ((Number) v).intValue())
+            }
+            scopeStore = profile.get("scopeProductStoreId")
+        }
+        boolean scoped = false
+        try {
+            if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)); scoped = true }
+            List<NestedEdgeMeta> metas = nestedEdgeMetas()
+            GraphQLSchema executable = withFetchers(metas)
+            // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB)
+            GovernorInstrumentation governor = new GovernorInstrumentation(ec, built, effectiveCfg)
+            GraphQL graphQL = GraphQL.newGraphQL(executable).instrumentation(governor).build()
+            ExecutionInput.Builder inB = ExecutionInput.newExecutionInput().query(query)
+                    .dataLoaderRegistry(buildRegistry(metas))
+            if (variables != null) inB.variables(variables)
+            if (operationName) inB.operationName(operationName)
+            ExecutionInput input = inB.build()
+            // decision 10: one read-only transaction on the calling thread
+            ExecutionResult er = (ExecutionResult) ec.transaction.runUseOrBegin(queryTimeoutSeconds, "gql execute error", { graphQL.execute(input) })
 
-        Object data = er.getData()
-        List errors = er.getErrors().collect { [message: it.getMessage(), extensions: it.getExtensions()] }
-        long cost = governor.estimatedCost
-        long durationMs = System.currentTimeMillis() - startMs
-        int rows = countRows(data)
-        // Shopify-shaped cost. actualQueryCost == requested (not separately measured). throttleStatus is
-        // LIVE from the per-caller bucket (phase 2): currentlyAvailable reflects debits + time refills.
-        def td = governor.throttleDecision
-        Map throttle = (td != null) ?
-                [maximumAvailable: td.maximumAvailable, currentlyAvailable: (long) td.currentlyAvailable, restoreRate: td.restoreRate] :
-                [maximumAvailable: govCfg.bucketSize, currentlyAvailable: govCfg.bucketSize, restoreRate: govCfg.restoreRate]
-        Map extensions = [cost: [requestedQueryCost: cost, actualQueryCost: cost, throttleStatus: throttle]]
-        writeQueryLog(query, cost, rows, durationMs, errors)
-        return [data: data, errors: errors, extensions: extensions]
+            Object data = er.getData()
+            List errors = er.getErrors().collect { [message: it.getMessage(), extensions: it.getExtensions()] }
+            long cost = governor.estimatedCost
+            long durationMs = System.currentTimeMillis() - startMs
+            int rows = countRows(data)
+            // Shopify-shaped cost. actualQueryCost == requested (not separately measured). throttleStatus is
+            // LIVE from the per-caller bucket (phase 2): currentlyAvailable reflects debits + time refills.
+            def td = governor.throttleDecision
+            Map throttle = (td != null) ?
+                    [maximumAvailable: td.maximumAvailable, currentlyAvailable: (long) td.currentlyAvailable, restoreRate: td.restoreRate] :
+                    [maximumAvailable: effectiveCfg.bucketSize, currentlyAvailable: effectiveCfg.bucketSize, restoreRate: effectiveCfg.restoreRate]
+            Map extensions = [cost: [requestedQueryCost: cost, actualQueryCost: cost, throttleStatus: throttle]]
+            writeQueryLog(query, cost, rows, durationMs, errors)
+            return [data: data, errors: errors, extensions: extensions]
+        } finally {
+            if (scoped) ScopeFilters.reset()
+        }
+    }
+
+    /** Resolve the caller's policy profile (userId -> member -> profile). Null = the global default.
+     *  Defensive: any lookup failure falls back to global config, never failing the request. */
+    private Map resolveCallerProfile() {
+        try {
+            String userId = ec.user?.userId
+            if (!userId) return null
+            def member = ec.entity.find("moqui.gql.GqlCallerProfileMember").condition("userId", userId).disableAuthz().one()
+            if (!member?.profileId) return null
+            def p = ec.entity.find("moqui.gql.GqlCallerProfile").condition("profileId", member.profileId).disableAuthz().one()
+            return p?.getMap()
+        } catch (Throwable t) {
+            ec.logger.warn("gql: caller-profile lookup failed: " + t.message); return null
+        }
     }
 
     /** Best-effort row count from the result tree: each Map element of any list (edges/plain lists). */
