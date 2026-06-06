@@ -1,5 +1,12 @@
 # moqui-gql (Phase 1) Implementation Plan
 
+> **HISTORICAL — COMPLETE.** This is the original Phase-1 TDD implementation plan. Phases 1, 1.5, 2,
+> and 3 have all shipped and merged; every task below is done. The one still-open item is framework
+> PR #45 (`EntityFind.queryTimeout`, assigned @dixitdeepak), which keeps epic #1 open. Kept as-is for
+> the historical record — its phase-1 scoping (e.g. static `throttleStatus`, deferred wall-clock) was
+> true of phase 1 and is **not** current reality. For present-day status and behaviour see `STATUS.md`,
+> `throttle.md` (live throttle), `query-cost-model.md`, and `design.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement task-by-task. Steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Ship a curated, read-only GraphQL query layer for Maarg OMS — **our OMS field names** with

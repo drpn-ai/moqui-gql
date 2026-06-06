@@ -237,7 +237,7 @@ Read row 4: only `185` credits are available, the query costs `340`, so it is re
 `THROTTLED` and the bucket is left untouched. The error reports `currentlyAvailable: 185`,
 `restoreRate: 50` → the client waits `ceil((340 − 185) / 50) = 4s` and (row 5) the query fits again.
 
-**Observed live (dogfood).** Running the real default bucket through `POST /rest/graphql` with a
+**Observed live (dogfood).** Running the real default bucket through `POST /rest/s1/graphql` with a
 repeated `billToCustomer` query, `currentlyAvailable` was seen moving **both directions** across
 requests — e.g. `1000 → 968 → 939 → 995 → 996` — dropping when debits outran refill and *recovering*
 when the gap between requests let refill outrun the debit. A bucket that only ever went down would be

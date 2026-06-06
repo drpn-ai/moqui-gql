@@ -1,7 +1,7 @@
 # Maarg GraphQL Query Layer with Cost Governance — Design
 
 **Date:** 2026-06-03
-**Status:** Design approved; pending implementation plan
+**Status:** Phases 1, 1.5, 2 & 3 shipped (core engine; Order/Product/Facility roots; live per-caller throttle + caller profiles; prepared-statement document cache). Only pending item: framework PR #45 (EntityFind.queryTimeout). This doc is the architecture record; the "— phase N" roadmap annotations below are historical.
 **Author:** Anil K Patel (with Claude)
 
 ## Problem
@@ -61,7 +61,7 @@ One caller-aware policy engine, tightened per audience.
 | 9 | Load isolation | **Dedicated, capped connection pool on a read replica** for all GraphQL reads (phase 1, first-class). Expensive/runaway queries can only starve their own bounded pool; the transactional OMS workload keeps its connections. |
 | 10 | Execution model | **One request = one thread = one read-only transaction.** `DataLoader` dispatches batches synchronously on the calling thread. Preserves Moqui's thread-bound `ExecutionContext` + transaction binding and gives a consistent read snapshot across the N batched levels. |
 | 11 | Authorization | **Cross-client isolation is a deployment property — one database per client, no shared multi-tenant DB — so no query-level cross-client scoping is needed.** Within a client's DB: (a) per-caller schema visibility driven by the policy profile (phase 2); (b) optional **party/role row-scoping** for external/partner callers who must see only their own slice (e.g. a supplier's own POs) — phase 2, tied to the partner audience. Phase 1 (internal, trusted) needs neither. The executor still exposes a **scope-filter seam** so party-scoping can be added in phase 2 without an invasive retrofit. |
-| 12 | Computed/assembled data | **Three field kinds: entity-backed, view-entity-backed, and service-backed resolvers.** Validated against real notnaked Order services (below): most needed data is raw fields + relationships, but key fields (`itemFulfillmentStatus`, `customerName`, `orderItemCompletedDatetime`) are *computed* and must reuse existing Moqui services. A field/edge may declare `resolver-service`; types may map to **view-entities** (free joins). Live external assembly (e.g. Shopify GraphQL calls) stays **out** — that is federation, not a DB-backed graph. |
+| 12 | Computed/assembled data | **Three field kinds: entity-backed, view-entity-backed, and service-backed resolvers.** Validated against real notnaked Order services (below): most needed data is raw fields + relationships. The shipped service-backed resolvers are `Order.itemCount` (`get#OrderItemCount`) and the `inventoryLevels` root (`get#InventoryLevels`); `customerName` was reclassified to the view-backed leaf edge `Order.billToCustomer` (the leaf-over-service rule). A field/edge may declare `resolver-service`; types may map to **view-entities** (free joins). Live external assembly (e.g. Shopify GraphQL calls) stays **out** — that is federation, not a DB-backed graph. |
 
 ### Load isolation (decision 9) — the primary blast-radius control
 
@@ -123,13 +123,12 @@ consumers need falls into three categories:
   (`shipGroups`, `paymentPreferences`, `adjustments`, `statuses`, `items`, `returns`,
   `contactMechs`, …); its `<master>` blocks are already a curated nested shape. Fully
   covered by the entity-backed field/edge model.
-- **(B) Computed** — fields derived by genuine logic over multiple entities. Real
-  examples: `itemFulfillmentStatus` (a state machine over approved/completed/cancelled
+- **(B) Computed** — fields derived by genuine logic over multiple entities. Illustrative computation candidates: `itemFulfillmentStatus` (a state machine over approved/completed/cancelled
   counts + returns, `ofbiz-oms-usl/.../OrderServices.xml:2861-2993`),
-  `orderItemCompletedDatetime` (filtered status lookup). NOTE: `customerName` (party→Person
+  `orderItemCompletedDatetime` (filtered status lookup). The only computed field shipped so far is `Order.itemCount` (an aggregate count via `get#OrderItemCount`). NOTE: `customerName` (party→Person
   concat) is **not** in this category — a join + concat is leaf data (see the leaf-over-service
   rule below), now `Order.billToCustomer`. Genuine joins use **view-entities**
-  (`OrderItemDetail`, `ReturnItemView`, `OrderBillToCustomer`).
+  (`OrderItemDetail` (illustrative), `ReturnItemView` (illustrative), `OrderBillToCustomer`).
 - **(C) Externally assembled** — live calls to Shopify/NetSuite (`ShopifyOrderServices.get#OrderDetails`).
 
 Design response — **three field kinds in the schema layer:**
@@ -256,8 +255,7 @@ the client keeps the cost model honest and the API a clean data graph.
    client.)
 5. **Runtime Guard** — wraps every execution step: JDBC query timeout, hard row
    cap that aborts mid-fetch, per-request wall-clock budget. Records actual cost.
-6. **Policy & Metering** — caller → profile (limits + budget). Phase 1: static
-   profiles in config. Phase 2: leaky-bucket rate budget debited by measured cost.
+6. **Policy & Metering** — caller → profile. Profiles are DB-backed (`GqlCallerProfile`/`GqlCallerProfileMember` by userId), overriding maxCost/maxFirst/maxInventoryKeys/bucketSize/restoreRate and optionally activating a ProductStore row-scope. The live per-caller leaky bucket debits each request's estimated cost (shipped).
 7. **Observability** — every query logs estimated cost, actual cost, rows, time,
    verdict. Drives threshold tuning and reveals which agent queries get rejected
    and why.
@@ -280,7 +278,7 @@ The existing `mantle-shopify-connector` (a GraphQL *client* on `graphql-java:25.
 Shopify's cost block: `extensions.cost.{requestedQueryCost, actualQueryCost,
 throttleStatus.{maximumAvailable, currentlyAvailable, restoreRate}}`. Our *server* emits the
 **same shape**, so any consumer already integrated with Shopify GraphQL understands our
-throttling for free, and the phase-2 leaky bucket maps 1:1:
+throttling for free. The live per-caller leaky bucket maps 1:1:
 
 ```json
 "extensions": { "cost": {
@@ -365,7 +363,7 @@ are our OMS data model** — consumers see Maarg's model, not Shopify's.
 
 **Keep ours (data model):**
 - **D-D — field/type names are our model:** `orderId`, `orderDate`, `statusId`, `grandTotal`+`currencyUomId`,
-  `orderItems`, `fulfillmentStatus`, `shipGroups`, `paymentPreferences`, `facilityName`, …
+  `orderItems`, `shipGroups`, `paymentPreferences`, `facilityName`, …
   **No** Shopify field names, **no** `MoneyBag`/`...Set`, **no** display-status enums.
 - **D-B — raw entity ids**, single or composite. No `gid://`, `Node`, or `node()`/`nodes()`.
   Lookups via `order(id:)`/`order(externalId:)`/`orderByIdentification`.
@@ -429,9 +427,8 @@ are our OMS data model** — consumers see Maarg's model, not Shopify's.
 - **Mutations / writes** — go through normal Moqui services.
 - **Open traversal over the raw entity model** — rejected for the curated graph.
 - **Auto-generating the whole graph from the entity model** — leaks the raw model.
-- **Per-caller field/type visibility** — seam designed in phase 1, populated in phase 2.
-- **Leaky-bucket rate budget (governance layer 5)** — phase 2; cost score is a real
-  number from day one so it can meter later.
+- **Per-caller field/type *visibility*** — not yet built (the row-scope seam + ProductStore scoping shipped in Phase 2; per-field hiding remains future).
+- **Leaky-bucket rate budget (governance layer 5)** — ✅ delivered (Phase 2): live per-caller token bucket debiting each request's estimated cost.
 - **Async/parallel fetcher execution** — deferred indefinitely; single-thread model chosen.
 
 ## GSTACK REVIEW REPORT

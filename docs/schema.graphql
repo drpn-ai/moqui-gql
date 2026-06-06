@@ -2,7 +2,7 @@
 # moqui-gql — GraphQL Schema (SDL), initial scope
 #
 # Field/type names are the Maarg OMS data model (orderId, orderDate, statusId,
-# grandTotal, orderItems, fulfillmentStatus, ...). The query LANGUAGE is
+# grandTotal, orderItems, ...). The query LANGUAGE is
 # Shopify-shaped: `query:` search string, sortKey + reverse, Relay cursor
 # connections, custom scalars. Read-only. DB-backed (Q1). Raw entity ids — no
 # global IDs / Node (D-B). Analytics deferred (Q2).
@@ -18,6 +18,12 @@
 # This SDL is the CONTRACT the test catalog (examples.md) exercises (plan Task 7
 # asserts the built SDL >= this; Task 14 runs the catalog as tests). Generated
 # from per-deployment schema artifacts; entity wiring differs per install.
+#
+# The currently-BUILT surface is the subset in graphql/OmsSchema.gql.xml (see
+# STATUS.md); types/roots/fields below that are not in that artifact — picklists,
+# transfer/purchase orders, productStore, cycle counts, routing, BOPIS/ATP
+# convenience roots, PostalAddress, and the customerName/fulfillmentStatus/
+# orderCount service fields — are design surface, NOT yet implemented.
 # =============================================================================
 
 # --- Custom scalars ----------------------------------------------------------
@@ -126,7 +132,7 @@ enum ProductSortKey { PRODUCT_NAME PRODUCT_ID }
 enum PartySortKey { PARTY_ID LAST_NAME }
 
 "Computed fulfillment rollup for an order item (decision 12; service-backed)."
-enum FulfillmentStatus { PROCESSING PARTIALLY_COMPLETED COMPLETED CANCELLED RETURNED PARTIALLY_REFUNDED }
+enum FulfillmentStatus { PROCESSING PARTIALLY_COMPLETED COMPLETED CANCELLED RETURNED PARTIALLY_REFUNDED } # NOT YET IMPLEMENTED — design contract
 
 # =============================================================================
 # Order graph
@@ -143,10 +149,12 @@ type Order {
   grandTotal: Decimal
   currencyUomId: ID
   productStoreId: ID
-  salesChannelEnumId: ID
-  customerPartyId: ID
-  "Service-backed: BILL_TO party display name."
-  customerName: String @service(name: "get#OrderCustomerName") @cost(weight: 25)
+  salesChannelEnumId: ID # not yet implemented (design surface)
+  customerPartyId: ID # not yet implemented (design surface)
+  "BILL_TO customer leaf object (view-backed); client composes the display name from firstName + lastName."
+  billToCustomer: BillToCustomer
+  "Service-backed: count of order items."
+  itemCount: Int @service(name: "get#OrderItemCount")
   billingAddress: PostalAddress
   # connections (paginable)
   orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection! @cost(weight: 2)
@@ -158,6 +166,8 @@ type Order {
   adjustments(first: Int = 50): [OrderAdjustment!]!
   paymentPreferences(first: Int = 20): [OrderPaymentPreference!]!
 }
+
+type BillToCustomer { partyId: ID!  firstName: String  lastName: String }
 
 type OrderItemConnection { edges: [OrderItemEdge!]!  pageInfo: PageInfo! }
 type OrderItemEdge { cursor: String!  node: OrderItem! }
@@ -173,7 +183,7 @@ type OrderItem {
   estimatedDeliveryDate: DateTime
   returnTillDate: DateTime
   "Service-backed computed fulfillment rollup (decision 12)."
-  fulfillmentStatus: FulfillmentStatus @service(name: "get#ItemFulfillmentStatus") @cost(weight: 25)
+  fulfillmentStatus: FulfillmentStatus @service(name: "get#ItemFulfillmentStatus") @cost(weight: 25) # NOT YET IMPLEMENTED — design contract
   adjustments(first: Int = 50): [OrderAdjustment!]!
 }
 
@@ -282,7 +292,7 @@ type ProductStoreShipmentMethod { shipmentMethodTypeId: ID!  carrierPartyId: ID 
 # =============================================================================
 type InventoryCheck { available: Boolean!  atp: Decimal }
 type AtpResult { atp: Decimal }
-type InventoryLevel { productId: ID!  facilityId: ID  quantityOnHandTotal: Decimal  availableToPromiseTotal: Decimal  minimumStock: Decimal }
+type InventoryLevel { productId: ID!  facilityId: ID  quantityOnHand: Decimal  availableToPromise: Decimal }
 
 # =============================================================================
 # Cycle count

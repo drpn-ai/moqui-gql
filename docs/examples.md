@@ -1,7 +1,15 @@
 # moqui-gql — Capability Examples & Test-Case Catalog
 
-**Status:** Requirements / design phase. Source of truth for what the API does, and the basis for
-the test suite. Every example is a `Need → Query → Output` triple.
+> **⚠️ Design capability catalog — not all of it is built.** This document is the design contract and
+> test-case catalog: it enumerates *intended* capability across all OMS domains. The **shipped**
+> read-only surface is the subset defined by [`../graphql/OmsSchema.gql.xml`](../graphql/OmsSchema.gql.xml)
+> (authoritative) and summarized in [`STATUS.md`](STATUS.md). Sections for picklists, transfer/purchase
+> orders, cycle counts, routing, and BOPIS/ATP convenience roots — and fields like `fulfillmentStatus`,
+> `orderCount`, `customerPartyId` — describe intended capability that is **not yet implemented**.
+> Examples against *built* roots have been corrected to the shipped field names.
+
+**Status:** Design capability catalog and the basis for the test suite (see the ⚠️ note above for
+what is built today). Every example is a `Need → Query → Output` triple.
 
 **Field names are OUR OMS data model** (`orderId`, `orderDate`, `statusId`, `grandTotal`,
 `orderItems`, `fulfillmentStatus`, …). From **Shopify we adopt only the query language**: `query:`
@@ -45,7 +53,6 @@ Validates against `schema.graphql` (plan Task 7 + Task 14 bind code to this cata
 | `orderName` | eq | OrderHeader.orderName | idx |
 | `statusId` | eq, in | OrderHeader.statusId | idx |
 | `orderDate` | >, >=, <, <= | OrderHeader.orderDate | idx |
-| `customerPartyId` | eq, in | OrderRole(BILL_TO).partyId | idx |
 | `productStoreId` | eq, in | OrderHeader.productStoreId | idx |
 
 `OrderSortKey`: `ORDER_DATE`, `ORDER_NAME`, `GRAND_TOTAL`, `ORDER_ID`. Unknown key →
@@ -87,9 +94,8 @@ query Orders {
 ```graphql
 query OrderDetail($orderId: ID!) {
   order(orderId: $orderId) {
-    orderName statusId orderDate grandTotal currencyUomId customerPartyId customerName
-    billingAddress { address1 city stateProvinceGeoId postalCode countryGeoId }
-    orderItems(first: 50) { edges { node { orderItemSeqId productId quantity unitPrice statusId fulfillmentStatus promisedDate } } }
+    orderName statusId orderDate grandTotal currencyUomId itemCount billToCustomer { partyId firstName lastName }
+    orderItems(first: 50) { edges { node { orderItemSeqId productId quantity unitPrice statusId promisedDate } } }
     shipGroups(first: 10) { edges { node { shipGroupSeqId shipmentMethodTypeId carrierPartyId trackingCode facility { facilityName } } } }
     statuses(first: 50) { statusId statusDatetime }
     paymentPreferences(first: 20) { paymentMethodTypeId maxAmount statusId } } }
@@ -98,29 +104,28 @@ Variables: `{ "orderId": "10001" }`
 ```json
 { "data": { "order": {
   "orderName": "NN10001", "statusId": "ORDER_APPROVED", "orderDate": "2026-05-14T09:32:00Z",
-  "grandTotal": "129.00", "currencyUomId": "USD", "customerPartyId": "CUST_88", "customerName": "Jordan Lee",
-  "billingAddress": { "address1": "123 Main St", "city": "Austin", "stateProvinceGeoId": "USA_TX", "postalCode": "78701", "countryGeoId": "USA" },
+  "grandTotal": "129.00", "currencyUomId": "USD", "itemCount": 2, "billToCustomer": { "partyId": "CUST_88", "firstName": "Jordan", "lastName": "Lee" },
   "orderItems": { "edges": [
-    { "node": { "orderItemSeqId": "00001", "productId": "NN-HOODIE-BLK-M", "quantity": 1, "unitPrice": "89.00", "statusId": "ITEM_APPROVED", "fulfillmentStatus": "PROCESSING", "promisedDate": "2026-05-20T00:00:00Z" } },
-    { "node": { "orderItemSeqId": "00002", "productId": "NN-SOCK-3PK", "quantity": 2, "unitPrice": "20.00", "statusId": "ITEM_COMPLETED", "fulfillmentStatus": "COMPLETED", "promisedDate": "2026-05-18T00:00:00Z" } } ] },
+    { "node": { "orderItemSeqId": "00001", "productId": "NN-HOODIE-BLK-M", "quantity": 1, "unitPrice": "89.00", "statusId": "ITEM_APPROVED", "promisedDate": "2026-05-20T00:00:00Z" } },
+    { "node": { "orderItemSeqId": "00002", "productId": "NN-SOCK-3PK", "quantity": 2, "unitPrice": "20.00", "statusId": "ITEM_COMPLETED", "promisedDate": "2026-05-18T00:00:00Z" } } ] },
   "shipGroups": { "edges": [ { "node": { "shipGroupSeqId": "00001", "shipmentMethodTypeId": "STANDARD", "carrierPartyId": "USPS", "trackingCode": "9400111899560000000000", "facility": { "facilityName": "Dallas DC" } } } ] },
   "statuses": [ { "statusId": "ORDER_CREATED", "statusDatetime": "2026-05-14T09:32:00Z" }, { "statusId": "ORDER_APPROVED", "statusDatetime": "2026-05-14T09:40:00Z" } ],
   "paymentPreferences": [ { "paymentMethodTypeId": "CREDIT_CARD", "maxAmount": "129.00", "statusId": "PMNT_SETTLED" } ] } },
   "extensions": { "cost": { "requestedQueryCost": 173, "actualQueryCost": 173,
     "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 827, "restoreRate": 50 } } } }
 ```
-**maps:** OrderHeader + connections + plain lists; `customerName`/`fulfillmentStatus` service-backed; billingAddress via OrderContactMech→PostalAddress · **kind:** `[DB][VIEW][SERVICE]` · **cost:** moderate (illustrative) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`; `fulfillmentStatus` ∈ enum.
+**maps:** OrderHeader + connections + plain lists; `billToCustomer` a view-backed leaf edge {partyId, firstName, lastName} (client composes the display name); `itemCount` service-backed · **kind:** `[DB][VIEW][SERVICE]` · **cost:** moderate (illustrative) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`.
 
 ### A2 — Open-orders queue, first page
 ```graphql
 { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2) {
-    edges { cursor node { orderId orderName orderDate grandTotal customerName } }
+    edges { cursor node { orderId orderName orderDate grandTotal billToCustomer { firstName lastName } } }
     pageInfo { hasNextPage hasPreviousPage startCursor endCursor } } }
 ```
 ```json
 { "data": { "orders": { "edges": [
-  { "cursor": "b3JkZXI6MTAwMDE=", "node": { "orderId": "10001", "orderName": "NN10001", "orderDate": "2026-05-14T09:32:00Z", "grandTotal": "129.00", "customerName": "Jordan Lee" } },
-  { "cursor": "b3JkZXI6MTAwMDU=", "node": { "orderId": "10005", "orderName": "NN10005", "orderDate": "2026-05-14T10:05:00Z", "grandTotal": "54.00", "customerName": "Priya Shah" } } ],
+  { "cursor": "b3JkZXI6MTAwMDE=", "node": { "orderId": "10001", "orderName": "NN10001", "orderDate": "2026-05-14T09:32:00Z", "grandTotal": "129.00", "billToCustomer": { "firstName": "Jordan", "lastName": "Lee" } } },
+  { "cursor": "b3JkZXI6MTAwMDU=", "node": { "orderId": "10005", "orderName": "NN10005", "orderDate": "2026-05-14T10:05:00Z", "grandTotal": "54.00", "billToCustomer": { "firstName": "Priya", "lastName": "Shah" } } } ],
   "pageInfo": { "hasNextPage": true, "hasPreviousPage": false, "startCursor": "b3JkZXI6MTAwMDE=", "endCursor": "b3JkZXI6MTAwMDU=" } } } }
 ```
 **kind:** `[DB]` · **cost:** cheap · **test:** ≤2 edges; all approved; ascending orderDate; cursors correct.
@@ -245,7 +250,7 @@ Variables: `{ "orderId": "10001" }`
   facilityInventory(facilityId: "WH1", productId: "NN-TEE-WHT-L") { quantityOnHandTotal availableToPromiseTotal minimumStock }
   # bulk ATP (R3): many SKUs across facilities in one call
   inventoryLevels(productIds: ["NN-TEE-WHT-L","NN-HOODIE-BLK-M"], facilityIds: ["WH1","STORE_07"]) {
-    productId facilityId availableToPromiseTotal } }
+    productId facilityId availableToPromise } }
 ```
 ```json
 { "data": {
@@ -253,10 +258,10 @@ Variables: `{ "orderId": "10001" }`
   "productOnlineAtp": { "atp": "142" },
   "facilityInventory": { "quantityOnHandTotal": "160", "availableToPromiseTotal": "142", "minimumStock": "18" },
   "inventoryLevels": [
-    { "productId": "NN-TEE-WHT-L", "facilityId": "WH1", "availableToPromiseTotal": "142" },
-    { "productId": "NN-TEE-WHT-L", "facilityId": "STORE_07", "availableToPromiseTotal": "7" },
-    { "productId": "NN-HOODIE-BLK-M", "facilityId": "WH1", "availableToPromiseTotal": "33" },
-    { "productId": "NN-HOODIE-BLK-M", "facilityId": "STORE_07", "availableToPromiseTotal": "0" } ] } }
+    { "productId": "NN-TEE-WHT-L", "facilityId": "WH1", "availableToPromise": "142" },
+    { "productId": "NN-TEE-WHT-L", "facilityId": "STORE_07", "availableToPromise": "7" },
+    { "productId": "NN-HOODIE-BLK-M", "facilityId": "WH1", "availableToPromise": "33" },
+    { "productId": "NN-HOODIE-BLK-M", "facilityId": "STORE_07", "availableToPromise": "0" } ] } }
 ```
 **maps:** `get#BopisInventory`/`get#ProductOnlineAtp`/`get#InventoryLevels` (service); `ProductFacilityView` (view) · **kind:** `[SERVICE][VIEW]` · **cost:** high (service-backed fixed cost) · **test:** Decimal as strings; `inventoryLevels` capped at `maxInventoryKeys` product×facility pairs (→ `BATCH_LIMIT_EXCEEDED` beyond it).
 
@@ -417,7 +422,7 @@ descriptions precisely so a standard introspection makes it visible.
 // N1
 { "errors": [ { "message": "query cost 500000 exceeds max 1000", "extensions": { "code": "COST_EXCEEDED", "estimatedCost": 500000, "maxCost": 1000 } } ], "data": null }
 // N2
-{ "errors": [ { "message": "search key 'orderName2' is not filterable (allowed: orderId, externalId, orderName, statusId, orderDate, customerPartyId, productStoreId)", "extensions": { "code": "FIELD_NOT_FILTERABLE", "key": "orderName2" } } ], "data": null }
+{ "errors": [ { "message": "search key 'orderName2' is not filterable (allowed: orderId, externalId, orderName, statusId, orderDate, productStoreId)", "extensions": { "code": "FIELD_NOT_FILTERABLE", "key": "orderName2" } } ], "data": null }
 // N3
 { "errors": [ { "message": "connection field 'orders' requires 'first:' or 'last:' (1..100)", "extensions": { "code": "FIRST_REQUIRED", "field": "orders", "maxFirst": 100 } } ], "data": null }
 // N5

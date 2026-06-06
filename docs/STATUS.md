@@ -4,7 +4,7 @@ A curated, **read-only GraphQL layer** over the HotWax/Maarg OMS data model, mod
 Admin API (query language + `extensions.cost`), fronted by a **cost governor** so internal apps, AI
 agents, and partners can fetch nested OMS data without harming the system.
 
-**Status:** Phases 1, 1.5, and 2 complete and merged to `main`. **70 tests pass** across 25 classes,
+**Status:** Phases 1, 1.5, 2, and 3 complete and merged to `main`. **75 tests pass** across 27 classes,
 all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The only
 outstanding item is a framework dependency (see below).
 
@@ -33,6 +33,11 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 - **Live cost throttle**: per-caller token bucket (cost-debited, time-refilled); over-budget → `THROTTLED`; `extensions.cost.throttleStatus` reports the real bucket
 - **Caller profiles + scope activation**: `GqlCallerProfile` overrides per-caller limits and activates the (ThreadLocal) `ScopeFilter` seam for row-scope
 
+### Phase 3 — query cache + service-field audit (epic #26, PRs #29–#32)
+- **Prepared-statement document cache**: `CachingPreparsedDocumentProvider` caches the parsed + validated GraphQL `Document` per query string — "PREPARE once, EXECUTE many" (the JDBC prepared-statement analogue)
+- **`customerName` → `billToCustomer`**: the service-backed `customerName` became a view-backed has-one leaf edge (`{partyId, firstName, lastName}`); the **leaf-over-service rule** is codified in `design.md` decision 12
+- **Runtime deploy + HTTP verification**: a `deployToLib` task builds the component jar; `POST /rest/s1/graphql` exercised end-to-end over real HTTP (billToCustomer, the prepared-statement cache, and the live throttle bucket)
+
 ---
 
 ## Capabilities
@@ -41,13 +46,14 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 |---|---|
 | Query language | Shopify-style `query:` search (declared keys + comparators), `sortKey`+`reverse`, Relay connections — over our OMS field names |
 | Pagination | Keyset cursors, forward + backward, single- and composite-PK; no OFFSET (deep pages stay flat-cost) |
-| Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`), service-backed fields (`Order.customerName`) and roots (`inventoryLevels`) |
+| Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`), service-backed fields (`Order.itemCount`) and roots (`inventoryLevels`), view-backed has-one leaf edges (`Order.billToCustomer`) |
 | Batching | DataLoader — one `WHERE fk IN(:keys)` per level (no N+1) for connections, plain lists, and service calls |
 | External-id | `order(externalId:)`, `order.identifications`, `orderByIdentification`, `facility(externalId:)` |
 | Governor | Pre-execution gate (nothing hits the DB on reject) with stable `extensions.code`; runtime `queryTimeout` + per-level row caps + wall-clock deadline |
 | Throttle | Live per-caller token bucket → `THROTTLED`; live `throttleStatus` |
 | Caller policies | `GqlCallerProfile` overrides limits per caller; activates the `ScopeFilter` row-scope seam |
-| Endpoint + observability | `POST /rest/graphql`, `GET /rest/graphql/sdl`; one `GqlQueryLog` row per request (verdict/cost/rows/duration) |
+| Query cache | Prepared-statement document cache (`CachingPreparsedDocumentProvider`) — parsed + validated `Document` cached per query string (JDBC prepared-statement analogue) |
+| Endpoint + observability | `POST /rest/s1/graphql`, `GET /rest/s1/graphql/sdl`; one `GqlQueryLog` row per request (verdict/cost/rows/duration) |
 
 ### Stable error codes (governor, pre-execution)
 `DEPTH_EXCEEDED` · `COST_EXCEEDED` · `FIRST_REQUIRED` · `FIRST_TOO_LARGE` · `FIELD_NOT_FILTERABLE` ·
@@ -55,11 +61,11 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 
 ### Schema surface
 Order, OrderItem, OrderStatus, OrderAdjustment, OrderPaymentPreference, ShipGroup, OrderIdentification,
-Party (view), Shipment, Return, Product, Facility, InventoryLevel.
+BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, InventoryLevel.
 
 ---
 
-## Tests — 70 across 25 classes (vs `hcsd_notnaked`)
+## Tests — 75 across 27 classes (vs `hcsd_notnaked`)
 
 | Group | Classes (count) |
 |---|---|
@@ -70,6 +76,7 @@ Party (view), Shipment, Return, Product, Facility, InventoryLevel.
 | External-id | `ExternalIdTests` (4) |
 | Endpoint + observability | `EndpointTests` (4) — service, cost shape, ALLOWED + REJECTED logging |
 | Phase 2 | `ThrottleGateTests` (1), `ThrottleE2ETests` (1), `CallerProfileTests` (2) |
+| Phase 3 | `PreparsedCacheTests` (3), `BillToCustomerTests` (2) |
 | Scope seam | `ScopeSeamTests` (3) — invoked per find, restricts rows, batch cardinality (no N+1) |
 | Catalog contract | `CatalogContractTests` (6) — A2/E/J/L + shipments-with-data + returns |
 | Unit / scaffold | Scalars, SchemaArtifactParser, SearchQueryParser (4), CostModel, IndexClassifier, GqlSchemaBuilder, GqlToolFactory, QueryTimeout (2), ScaffoldSmoke (3), ShipmentRoot (3) |

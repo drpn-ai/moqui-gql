@@ -9,9 +9,14 @@ connection-style pagination, and a query-cost budget — adapted to Moqui's enti
 
 ## Status
 
-**Requirements & design phase — requirements/examples baselined as `v0.1-requirements`.** No
-framework code yet. The contract is set: `requirements.md` (what consumers need), `examples.md`
-(what the API does, as test cases), and `schema.graphql` (the SDL). Implementation follows.
+**Phases 1, 1.5, 2 & 3 are implemented and merged.** The engine builds the curated schema at
+startup, governs query cost pre-execution (depth/cost/first/filter/batch limits), executes
+Relay-paginated reads with DataLoader batching in one read-only transaction, throttles per caller
+(live token bucket), caches parsed query documents, and serves `POST /rest/s1/graphql`
+(+ `GET /rest/s1/graphql/sdl`). **~75 tests pass** against MySQL `hcsd_notnaked`. The one open
+dependency is framework PR #45 (`EntityFind.queryTimeout`). See [`docs/STATUS.md`](docs/STATUS.md)
+for authoritative status; the design docs below remain the contract — some surface is intended,
+not yet built (see each doc's header).
 
 ## Documents
 
@@ -29,8 +34,10 @@ framework code yet. The contract is set: `requirements.md` (what consumers need)
 
 ## Reading order
 
-New here? Start with **`docs/requirements.md`** (what consumers need) → **`docs/examples.md`**
-(what the API does, as test cases) → **`docs/design.md`** (how) → the plan.
+For current status, start with **`docs/STATUS.md`**. For the design, read
+**`docs/requirements.md`** (what consumers need) → **`docs/examples.md`** (the capability catalog)
+→ **`docs/design.md`** (how) → **`docs/query-cost-model.md`** + **`docs/throttle.md`** (governance
+internals) → **`docs/implementation-plan-phase1.md`** (the plan).
 
 ## Principles
 
