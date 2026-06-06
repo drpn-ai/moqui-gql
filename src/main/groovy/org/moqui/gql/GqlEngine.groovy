@@ -59,7 +59,9 @@ class GqlEngine {
                 maxInventoryKeys     : (sysOr("gql.maxInventoryKeys", "500")) as int,
                 unindexedFilterPenalty: (sysOr("gql.unindexedFilterPenalty", "50")) as int,
                 serviceFixedCost     : (sysOr("gql.serviceFixedCost", "25")) as int,
-                wallClockBudgetMs    : (sysOr("gql.wallClockBudgetMs", "30000")) as int]
+                wallClockBudgetMs    : (sysOr("gql.wallClockBudgetMs", "30000")) as int,
+                bucketSize           : (sysOr("gql.throttle.bucketSize", sysOr("gql.maxCost", "1000"))) as int,
+                restoreRate          : (sysOr("gql.throttleRestoreRate", "50")) as int]
     }
 
     private static String sysOr(String n, String d) { String v = System.getProperty(n); return v != null ? v : d }
@@ -84,13 +86,13 @@ class GqlEngine {
         long cost = governor.estimatedCost
         long durationMs = System.currentTimeMillis() - startMs
         int rows = countRows(data)
-        // Shopify-shaped cost. Phase 1: actualQueryCost == requested (not separately measured);
-        // throttleStatus is STATIC (currentlyAvailable == maximumAvailable) — no fake decrementing bucket.
-        int maxCost = govCfg.maxCost
-        Map extensions = [cost: [
-                requestedQueryCost: cost, actualQueryCost: cost,
-                throttleStatus: [maximumAvailable: maxCost, currentlyAvailable: maxCost,
-                                 restoreRate: (sysOr("gql.throttleRestoreRate", "50")) as int]]]
+        // Shopify-shaped cost. actualQueryCost == requested (not separately measured). throttleStatus is
+        // LIVE from the per-caller bucket (phase 2): currentlyAvailable reflects debits + time refills.
+        def td = governor.throttleDecision
+        Map throttle = (td != null) ?
+                [maximumAvailable: td.maximumAvailable, currentlyAvailable: (long) td.currentlyAvailable, restoreRate: td.restoreRate] :
+                [maximumAvailable: govCfg.bucketSize, currentlyAvailable: govCfg.bucketSize, restoreRate: govCfg.restoreRate]
+        Map extensions = [cost: [requestedQueryCost: cost, actualQueryCost: cost, throttleStatus: throttle]]
         writeQueryLog(query, cost, rows, durationMs, errors)
         return [data: data, errors: errors, extensions: extensions]
     }

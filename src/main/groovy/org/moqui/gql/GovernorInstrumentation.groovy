@@ -27,6 +27,7 @@ import graphql.schema.GraphQLNonNull
 import graphql.schema.GraphQLObjectType
 import graphql.schema.GraphQLType
 import org.moqui.context.ExecutionContext
+import org.moqui.gql.policy.ThrottleGate
 import org.moqui.gql.search.SearchQueryParser
 
 /**
@@ -50,8 +51,11 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     final int maxDepth, maxCost, maxFirst, serviceBatchKeyLimit, maxInventoryKeys, unindexedFilterPenalty, serviceFixedCost
     private final long wallClockBudgetMs
     private final long deadlineNanos
+    private final int bucketSize, restoreRate
     /** Static cost estimate computed during the pre-execution walk; read by the engine for extensions.cost. */
     volatile long estimatedCost = 0L
+    /** Live throttle decision (per-caller bucket) computed during the walk; read by the engine for throttleStatus. */
+    volatile ThrottleGate.Decision throttleDecision = null
     private static final long COST_CEILING = 100_000_000L
 
     GovernorInstrumentation(ExecutionContext ec, BuiltSchema built, Map<String, Integer> cfg) {
@@ -61,6 +65,8 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
         this.serviceBatchKeyLimit = cfg.serviceBatchKeyLimit; this.maxInventoryKeys = cfg.maxInventoryKeys
         this.unindexedFilterPenalty = cfg.unindexedFilterPenalty; this.serviceFixedCost = cfg.serviceFixedCost
         this.wallClockBudgetMs = (cfg.wallClockBudgetMs != null ? cfg.wallClockBudgetMs : 30000)
+        this.bucketSize = (cfg.bucketSize != null ? cfg.bucketSize : maxCost)
+        this.restoreRate = (cfg.restoreRate != null ? cfg.restoreRate : 50)
         // per-request deadline (instance is built per request); System.nanoTime is fine in component code
         this.deadlineNanos = System.nanoTime() + wallClockBudgetMs * 1_000_000L
     }
@@ -95,6 +101,16 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
         if (cost > maxCost)
             w.errors.add(err("query cost " + cost + " exceeds max " + maxCost, "COST_EXCEEDED",
                     [estimatedCost: cost, maxCost: maxCost]))
+
+        // throttle is the LAST gate: debit the per-caller bucket only if the query would otherwise execute
+        boolean willExecute = w.errors.isEmpty()
+        String callerKey = ec.user?.userId ?: "anonymous"
+        ThrottleGate.Decision td = ThrottleGate.check(ec, callerKey, cost, bucketSize, restoreRate, willExecute)
+        this.throttleDecision = td
+        if (willExecute && !td.allowed)
+            w.errors.add(err("throttled: query cost " + cost + " exceeds available " + (long) td.currentlyAvailable +
+                    " (max " + bucketSize + ", restore " + restoreRate + "/s)", "THROTTLED",
+                    [cost: cost, currentlyAvailable: (long) td.currentlyAvailable, maximumAvailable: bucketSize, restoreRate: restoreRate]))
 
         if (!w.errors.isEmpty()) throw new AbortExecutionException(w.errors)
         return super.beginExecuteOperation(params, state)

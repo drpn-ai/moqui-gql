@@ -27,12 +27,12 @@ class EndpointTests extends Specification {
         then:
         r.errors.isEmpty()
         r.data.order.orderId == sampleOrderId
-        and: "cost envelope shape (values illustrative; throttleStatus static in phase 1)"
+        and: "cost envelope shape (values illustrative; throttleStatus is the LIVE per-caller bucket)"
         def cost = r.extensions.cost
         cost.requestedQueryCost != null
         cost.actualQueryCost == cost.requestedQueryCost
         cost.throttleStatus.maximumAvailable != null
-        cost.throttleStatus.currentlyAvailable == cost.throttleStatus.maximumAvailable
+        cost.throttleStatus.currentlyAvailable <= cost.throttleStatus.maximumAvailable
         cost.throttleStatus.restoreRate != null
     }
 

@@ -49,6 +49,10 @@ test {
     // ${moqui.runtime}/txlog/btm*.tlog journal. Bitronix lets system props override its config file.
     systemProperty 'bitronix.tm.journal', 'null'
     systemProperty 'bitronix.tm.serverId', 'moqui-gql-test'
+    // Effectively disable the per-caller throttle bucket for the suite (the shared "anonymous" caller
+    // would otherwise deplete a 1000-point bucket across dozens of queries and throttle unrelated
+    // tests). ThrottleE2ETests overrides this locally to a small bucket and save/restores it.
+    systemProperty 'gql.throttle.bucketSize', '1000000000'
     classpath += files(sourceSets.main.output.classesDirs)
     classpath += files(projectDir.absolutePath)
     classpath = classpath.filter { it.exists() }
