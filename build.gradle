@@ -25,6 +25,16 @@ dependencies {
     testImplementation 'org.spockframework:spock-junit4:2.1-groovy-3.0'
 }
 
+// Runtime deploy: build the component classes into lib/moqui-gql.jar so a running Moqui server loads
+// it from lib/*.jar (Moqui adds each component's classes/ + lib/*.jar to the shared classloader).
+// graphql-java + java-dataloader are already on that classloader via mantle-shopify-connector, so they
+// are not re-vendored here. Run: ./gradlew :runtime:component:moqui-gql:deployToLib
+task deployToLib(type: Copy, dependsOn: jar) {
+    from jar.archiveFile
+    into "${projectDir}/lib"
+    rename { 'moqui-gql.jar' }
+}
+
 test {
     useJUnitPlatform()
     testLogging { events "passed", "skipped", "failed" }

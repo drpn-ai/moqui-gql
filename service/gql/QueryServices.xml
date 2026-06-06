@@ -26,7 +26,7 @@
         </actions>
     </service>
 
-    <service verb="get" noun="Sdl" authenticate="false" allow-remote="true">
+    <service verb="get" noun="Sdl" authenticate="anonymous-all" allow-remote="true">
         <description>Published GraphQL SDL for the curated read schema.</description>
         <out-parameters><parameter name="sdl"/></out-parameters>
         <actions>

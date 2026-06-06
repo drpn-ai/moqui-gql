@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <resource xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/rest-api-3.xsd"
           name="graphql" displayName="GraphQL API" version="1.0.0" description="Curated read-only GraphQL over the OMS data model.">
-    <!-- POST /rest/graphql  body: { query, variables, operationName } -->
+    <!-- POST /rest/s1/graphql   body: { query, variables, operationName }  (requires authentication) -->
     <method type="post"><service name="gql.QueryServices.execute#Query"/></method>
-    <!-- GET /rest/graphql/sdl  -> published SDL -->
-    <resource name="sdl">
+    <!-- GET /rest/s1/graphql/sdl  -> published SDL (public, for tooling/introspection) -->
+    <resource name="sdl" require-authentication="anonymous-all">
         <method type="get"><service name="gql.QueryServices.get#Sdl"/></method>
     </resource>
 </resource>

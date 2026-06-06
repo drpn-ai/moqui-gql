@@ -4,3 +4,9 @@ Thumbs.db
 *.swp
 .idea/
 .vscode/
+
+# build output
+build/
+# runtime deploy artifact — built via `gradle :runtime:component:moqui-gql:deployToLib`,
+# loaded by a running server from lib/*.jar; not committed (same convention as moqui-ai.jar)
+lib/
