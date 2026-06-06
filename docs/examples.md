@@ -31,7 +31,7 @@ Validates against `schema.graphql` (plan Task 7 + Task 14 bind code to this cata
 6. **`first` is capped at `maxFirst` (=100)** on every connection AND nested edge; exceeding it is rejected.
 7. **Money & quantities are `Decimal`, serialized as STRINGS** (`"129.00"`, `"7"`). Dates are `DateTime`.
 8. **`extensions.cost` is illustrative**, not an asserted value — the engine computes it. `throttleStatus`
-   is **static in phase 1** (`currentlyAvailable == maximumAvailable`; live leaky bucket is phase 2).
+   reflects the **live per-caller bucket** (debited by cost, refilled at `restoreRate`/s) — see [`throttle.md`](throttle.md).
 9. **Errors** carry stable `extensions.code`: `COST_EXCEEDED`, `FIELD_NOT_FILTERABLE`, `OPERATOR_NOT_ALLOWED`, `FIRST_REQUIRED`, `FIRST_TOO_LARGE`, `DEPTH_EXCEEDED`, `BATCH_LIMIT_EXCEEDED`.
 
 ---
@@ -107,7 +107,7 @@ Variables: `{ "orderId": "10001" }`
   "statuses": [ { "statusId": "ORDER_CREATED", "statusDatetime": "2026-05-14T09:32:00Z" }, { "statusId": "ORDER_APPROVED", "statusDatetime": "2026-05-14T09:40:00Z" } ],
   "paymentPreferences": [ { "paymentMethodTypeId": "CREDIT_CARD", "maxAmount": "129.00", "statusId": "PMNT_SETTLED" } ] } },
   "extensions": { "cost": { "requestedQueryCost": 173, "actualQueryCost": 173,
-    "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 1000, "restoreRate": 50 } } } }
+    "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 827, "restoreRate": 50 } } } }
 ```
 **maps:** OrderHeader + connections + plain lists; `customerName`/`fulfillmentStatus` service-backed; billingAddress via OrderContactMech→PostalAddress · **kind:** `[DB][VIEW][SERVICE]` · **cost:** moderate (illustrative) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`; `fulfillmentStatus` ∈ enum.
 
@@ -456,7 +456,7 @@ Out of scope (no column): analytics/aggregation (Q2 deferred), full-text/faceted
 - **Shopify query language only:** `query:` string, `sortKey`+`reverse`, full Relay connections, cost/error envelope. **Field names are our OMS model.** **Raw entity ids** (D-B).
 - **G1 hybrid connections** (large=connection, small metadata=plain list). **R1–R3 coverage:** shipments queue (B0), party lookup (J5), bulk ATP (E `inventoryLevels`).
 - Q1 DB-only · Q2 analytics deferred · Q3 declare-and-control · Q4 Relay connections · Q5 external-id.
-- **Governance:** `maxFirst=100` per edge (N5); service-backed batch-key cap (N6); unindexed-key guard (N7); cost saturated in long (no overflow); `extensions.cost` illustrative, `throttleStatus` static in phase 1.
+- **Governance:** `maxFirst=100` per edge (N5); service-backed batch-key cap (N6); unindexed-key guard (N7); cost saturated in long (no overflow); `extensions.cost` illustrative, `throttleStatus` is the live per-caller bucket.
 
 ## Out of scope
 Writes/mutations, analytics (deferred), full-text Solr, `unigate` RPC, print/export, inbound webhooks, live external assembly, global IDs / `node()` (D-B).

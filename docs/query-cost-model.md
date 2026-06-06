@@ -223,7 +223,8 @@ stable `extensions.code`s with `data: null`:
 per-caller **token bucket** (`maximumAvailable` points, refilling at `restoreRate`/second). If the
 bucket can't cover the cost, the query is rejected with `THROTTLED` and **not** debited. Either way the
 response reports the live bucket in `extensions.cost.throttleStatus`. Caller **profiles**
-(`GqlCallerProfile`) can override `maxCost`, `maxFirst`, and the bucket size/rate per caller.
+(`GqlCallerProfile`) can override `maxCost`, `maxFirst`, and the bucket size/rate per caller. The full
+throttle model — refill math, gate ordering, defaults, and a worked trace — is in [`throttle.md`](throttle.md).
 
 So the cost number does double duty: a **hard ceiling** per query (`maxCost`) and a **spend** against a
 replenishing budget (throttle).

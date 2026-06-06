@@ -284,9 +284,9 @@ throttling for free, and the phase-2 leaky bucket maps 1:1:
 
 ```json
 "extensions": { "cost": {
-  "requestedQueryCost": 412,        // our static estimate (phase 1)
-  "actualQueryCost": 388,           // measured after execution (phase 1)
-  "throttleStatus": {               // budget view (static in phase 1; live bucket in phase 2)
+  "requestedQueryCost": 412,        // our static estimate
+  "actualQueryCost": 412,           // equals requestedQueryCost — we debit the estimate, not a re-measured cost
+  "throttleStatus": {               // live per-caller bucket (debited by cost, refilled at restoreRate/s)
     "maximumAvailable": 1000, "currentlyAvailable": 612, "restoreRate": 50 } } }
 ```
 
