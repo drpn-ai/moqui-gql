@@ -23,6 +23,12 @@
         <!-- plain bounded list (not a connection): typed external ids for this order -->
         <edge name="identifications" entity-relationship="OrderIdentification" target-type="OrderIdentification"
               list="true" kind="list" first-default="10"/>
+        <!-- ship groups: a Relay connection (composite child PK orderId+shipGroupSeqId, single-key join) -->
+        <edge name="shipGroups" entity-relationship="shipGroups" target-type="ShipGroup" list="true"/>
+        <!-- small fixed metadata: plain bounded lists -->
+        <edge name="statuses" entity-relationship="statuses" target-type="OrderStatus" list="true" kind="list" first-default="50"/>
+        <edge name="adjustments" entity-relationship="adjustments" target-type="OrderAdjustment" list="true" kind="list" first-default="50"/>
+        <edge name="paymentPreferences" entity-relationship="paymentPreferences" target-type="OrderPaymentPreference" list="true" kind="list" first-default="20"/>
         <root-query name="order" by-pk="true" pk-arg="orderId" external-id="true"/>
         <root-query name="orders" list="true"
             search-keys="orderId:eq,in externalId:eq,in orderName:eq statusId:eq,in orderDate:gt,gte,lt,lte productStoreId:eq,in"
@@ -37,6 +43,34 @@
     <gql-type name="OrderIdentification" entity-name="co.hotwax.order.OrderIdentification">
         <field name="orderIdentificationTypeId" entity-field="orderIdentificationTypeId" type="ID"/>
         <field name="idValue" entity-field="idValue"/>
+    </gql-type>
+
+    <gql-type name="OrderStatus" entity-name="org.apache.ofbiz.order.order.OrderStatus">
+        <field name="statusId" type="ID"/>
+        <field name="statusDatetime" type="DateTime"/>
+        <field name="orderItemSeqId"/>
+    </gql-type>
+
+    <gql-type name="OrderAdjustment" entity-name="org.apache.ofbiz.order.order.OrderAdjustment">
+        <field name="orderAdjustmentId" type="ID"/>
+        <field name="orderAdjustmentTypeId"/>
+        <field name="amount" type="Decimal"/>
+        <field name="comments"/>
+    </gql-type>
+
+    <gql-type name="OrderPaymentPreference" entity-name="org.apache.ofbiz.order.order.OrderPaymentPreference">
+        <field name="orderPaymentPreferenceId" type="ID"/>
+        <field name="paymentMethodTypeId"/>
+        <field name="maxAmount" type="Decimal"/>
+        <field name="statusId"/>
+    </gql-type>
+
+    <gql-type name="ShipGroup" entity-name="org.apache.ofbiz.order.order.OrderItemShipGroup">
+        <field name="shipGroupSeqId" type="ID"/>
+        <field name="shipmentMethodTypeId"/>
+        <field name="carrierPartyId"/>
+        <field name="facilityId"/>
+        <field name="contactMechId"/>
     </gql-type>
 
     <gql-type name="OrderItem" entity-name="org.apache.ofbiz.order.order.OrderItem">
