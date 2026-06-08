@@ -50,4 +50,21 @@ class SchemaArtifactParserTests extends Specification {
         art.rootQueries["order"].externalId
         art.rootQueries["order"].pkArg == "orderId"
     }
+
+    def "parses an aggregate field"() {
+        when:
+        def art = new org.moqui.gql.SchemaArtifactParser().parse([ org.moqui.util.MNode.parseText("t.gql.xml",
+            '<gql-schema><gql-type name="Order" entity-name="org.apache.ofbiz.order.order.OrderHeader">' +
+            '<field name="orderItemCount" type="Int" aggregate="count-distinct" ' +
+            'aggregate-entity="org.apache.ofbiz.order.order.OrderItem" aggregate-fk="orderId" aggregate-field="externalId"/>' +
+            '</gql-type></gql-schema>') ])
+        def f = art.types.get("Order").fields.get("orderItemCount")
+        then:
+        f.isAggregate()
+        f.aggregateFunction == "count-distinct"
+        f.aggregateEntity == "org.apache.ofbiz.order.order.OrderItem"
+        f.aggregateFk == "orderId"
+        f.aggregateField == "externalId"
+        !f.isServiceBacked()
+    }
 }

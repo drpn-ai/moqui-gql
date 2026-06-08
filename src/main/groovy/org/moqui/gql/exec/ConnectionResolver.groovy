@@ -48,7 +48,7 @@ class ConnectionResolver {
         this.maxFirst = maxFirst
     }
 
-    Map resolveRoot(GqlRootQuery q, GqlType type, Map<String, Object> args) {
+    Map resolveRoot(GqlRootQuery q, GqlType type, Map<String, Object> args, List<GqlField> aggFields) {
         String entityName = q.entityName ?: (type != null ? type.entityName : null)
         if (entityName == null) throw new GqlValidationException("SCHEMA_ERROR",
                 "no entity for root query " + q.name, ['query': (Object) q.name])
@@ -117,7 +117,12 @@ class ConnectionResolver {
                 (conds.size() == 1 ? conds.get(0) : ecf.makeCondition(conds, EntityCondition.AND))
 
         // ----- execute: fetch limit+1 in scan order to detect a further page; fetchSize<=maxRows (MySQL quirk) -----
-        EntityFind ef = ec.entity.find(entityName)
+        //   aggregate fields requested -> build over a dynamic view (base alias-all PRIME + a LATERAL
+        //   sub-select member per aggregate); conditions/ordering/keyset reference the same field names,
+        //   and getMap() additionally carries the aggregate column. -----
+        EntityFind ef = (aggFields == null || aggFields.isEmpty()) ?
+                ec.entity.find(entityName) :
+                AggregateViewBuilder.aggregateFind(ec, entityName, aggFields)
         if (where != null) ef.condition(where)
         ScopeFilters.apply(ef, entityName, ec)   // row-scope seam (phase-1 no-op)
         String dir = scanDescending ? "-" : ""

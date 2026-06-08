@@ -159,8 +159,8 @@ type Order {
   customerPartyId: ID # not yet implemented (design surface)
   "BILL_TO customer leaf object (view-backed); client composes the display name from firstName + lastName."
   billToCustomer: BillToCustomer
-  "Service-backed: count of order items."
-  itemCount: Int @service(name: "get#OrderItemCount")
+  "Number of distinct Shopify order lines (exploded OMS items from one Shopify line share OrderItem.externalId, so this is COUNT(DISTINCT externalId)). Resolved as a lazy LATERAL aggregate added to the order query only when selected; not filterable/sortable. 0 for orders with no/no-Shopify items."
+  orderItemCount: Int
   billingAddress: PostalAddress
   # connections (paginable)
   orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection! @cost(weight: 2)

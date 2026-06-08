@@ -41,6 +41,10 @@ adjustments grounded in how the executor actually runs:
 2. **Service-backed fields are opaque, so they're never cheap.** A field whose value comes from a
    Moqui service can do arbitrary work the static analyzer can't see. It is therefore charged a flat,
    deliberately-high fixed cost rather than `1`.
+3. **Aggregate fields cost more than a scalar but less than a service.** A field backed by a lazy
+   LATERAL aggregate (`Order.orderItemCount` = `COUNT(DISTINCT externalId)`) adds a sub-select to the
+   query only when selected. Its work is bounded and SQL-shaped — not opaque — so it carries a small
+   flat cost (`aggregateFieldCost`) rather than the service fixed cost.
 
 ### 2.2 The recursive formula
 
@@ -53,7 +57,8 @@ depends on the **kind** of the field:
 | Single object (by-pk root, single edge, by-identification) | `1 + child` | `child` = cost of its sub-selection |
 | **Connection** (Relay list: `orders`, `orderItems`, `shipGroups`) | `eff × (1 + child)` | `eff` = effective page size (see §2.3); root connections add an unindexed-filter penalty (§2.4) |
 | **Plain bounded list** (`identifications`, `statuses`, …) | `eff × (1 + child)` | `eff` from `first` or the field's declared default |
-| **Service-backed field** (`Order.itemCount`) | `serviceFixedCost` | flat; the sub-tree is not added (service scalars are leaves) |
+| **Aggregate field** (`Order.orderItemCount`) | `aggregateFieldCost` | flat; charged only when selected. A lazy LATERAL `COUNT(DISTINCT externalId)` sub-select — cheaper than a service call, dearer than a scalar |
+| **Service-backed field** (capability, no shipped field) | `serviceFixedCost` | flat; the sub-tree is not added (service scalars are leaves). The kind is retained but **no current schema field uses it** (see note below) |
 | **Service-backed root** (`inventoryLevels`) | `serviceFixedCost + child` | the service result's fields are still costed |
 
 For a connection, `child` is the cost of the **node** sub-selection — the Relay plumbing
@@ -78,6 +83,7 @@ rather than astronomically inflated by an already-illegal argument.
 | `maxCost` | `1000` | `gql.maxCost` | the gate: `cost > maxCost` → `COST_EXCEEDED` |
 | `maxFirst` | `100` | `gql.maxFirst` | clamp ceiling for `eff` |
 | `serviceFixedCost` | `25` | `gql.serviceFixedCost` | flat cost of a service-backed field/root |
+| `aggregateFieldCost` | `5` | `gql.aggregateFieldCost` | flat cost of a selected aggregate field (lazy LATERAL sub-select) |
 | `unindexedFilterPenalty` | `50` | `gql.unindexedFilterPenalty` | added once **per** declared `query:` term that filters an **unindexed** column |
 | `COST_CEILING` | `100,000,000` | code | saturation cap (see §2.5) |
 
@@ -111,9 +117,9 @@ re-measure after execution).
 
 ---
 
-## 3. Case study A — a real, allowed query (cost **340**)
+## 3. Case study A — a real, allowed query (cost **240**)
 
-A page of orders with a service-backed field and a nested item connection:
+A page of orders with an aggregate field and a nested item connection:
 
 ```graphql
 query {
@@ -121,7 +127,7 @@ query {
     edges { node {
       orderId
       orderName
-      itemCount                         # service-backed
+      orderItemCount                    # aggregate (lazy LATERAL COUNT DISTINCT)
       orderItems(first: 10) {
         edges { node { orderItemSeqId productId quantity } }
       }
@@ -136,15 +142,17 @@ Compute **bottom-up**:
 |---|---|---|---|
 | 1 | `OrderItem` node `{ orderItemSeqId, productId, quantity }` | 3 scalars | `3` |
 | 2 | `orderItems(first:10)` | connection: `eff=10`, `child=3` → `10 × (1+3)` | `40` |
-| 3 | `Order` node fields | `orderId`(1) + `orderName`(1) + `itemCount`(**25**, service) + `orderItems`(40) | `67` |
-| 4 | `orders(first:5)` | connection: `eff=5`, `child=67` → `5 × (1+67)` | **`340`** |
+| 3 | `Order` node fields | `orderId`(1) + `orderName`(1) + `orderItemCount`(**5**, aggregate) + `orderItems`(40) | `47` |
+| 4 | `orders(first:5)` | connection: `eff=5`, `child=47` → `5 × (1+47)` | **`240`** |
 
-**Verdict:** `340 ≤ maxCost (1000)` → **allowed**. The engine returns
-`extensions.cost.requestedQueryCost = 340`, and 340 points are debited from the caller's throttle
-bucket. Note the single service-backed field (`itemCount`) contributes its flat `25` regardless of
-how cheap or expensive the underlying service actually is.
+**Verdict:** `240 ≤ maxCost (1000)` → **allowed**. The engine returns
+`extensions.cost.requestedQueryCost = 240`, and 240 points are debited from the caller's throttle
+bucket. Note the aggregate field (`orderItemCount`) contributes its flat `5` only because it was
+selected — when omitted, no sub-select is added and the field costs nothing. (A *service-backed*
+field would instead contribute the flat `serviceFixedCost` of `25`, but no shipped schema field
+currently uses that kind — see §2.2.)
 
-*(Engine-confirmed: `requestedQueryCost = 340`.)*
+*(Engine-confirmed: `requestedQueryCost = 240`.)*
 
 ---
 

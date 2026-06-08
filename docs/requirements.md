@@ -78,7 +78,7 @@ Each is evidenced by existing usage.
 6. **Aggregation / analytics — DEFERRED (Q2 RESOLVED).** BI facts (SUM/COUNT/time-series) are a
    later opportunity, picked up after we have good usage examples from the user group. Not in the
    initial scope.
-7. **Computed / service-backed fields.** Genuine aggregations/state machines and ATP — shipped examples: `Order.itemCount`, `inventoryLevels` (ATP). (`customerName` is a join+concat, reclassified as the leaf `billToCustomer` edge per the leaf-over-service rule, not service-backed.) Validates decision 12.
+7. **Computed / service-backed fields.** Genuine aggregations/state machines and ATP — shipped examples: `Order.orderItemCount`, `inventoryLevels` (ATP). (`customerName` is a join+concat, reclassified as the leaf `billToCustomer` edge per the leaf-over-service rule, not service-backed.) Validates decision 12.
 8. **View-entity-backed types are the norm, not the exception.** `ReadyToPickWarehouseOrder`,
    `InflightOrder`, `PicklistItemView`, `ProductFacilityView`, `OrderItemReservation`,
    `OrderItemFulfillmentFact`. Clients model their working data as views. View-entity types are

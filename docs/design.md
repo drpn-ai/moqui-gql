@@ -61,7 +61,7 @@ One caller-aware policy engine, tightened per audience.
 | 9 | Load isolation | **Dedicated, capped connection pool on a read replica** for all GraphQL reads (phase 1, first-class). Expensive/runaway queries can only starve their own bounded pool; the transactional OMS workload keeps its connections. |
 | 10 | Execution model | **One request = one thread = one read-only transaction.** `DataLoader` dispatches batches synchronously on the calling thread. Preserves Moqui's thread-bound `ExecutionContext` + transaction binding and gives a consistent read snapshot across the N batched levels. |
 | 11 | Authorization | **Cross-client isolation is a deployment property — one database per client, no shared multi-tenant DB — so no query-level cross-client scoping is needed.** Within a client's DB: (a) per-caller schema visibility driven by the policy profile (phase 2); (b) optional **party/role row-scoping** for external/partner callers who must see only their own slice (e.g. a supplier's own POs) — phase 2, tied to the partner audience. Phase 1 (internal, trusted) needs neither. The executor still exposes a **scope-filter seam** so party-scoping can be added in phase 2 without an invasive retrofit. |
-| 12 | Computed/assembled data | **Three field kinds: entity-backed, view-entity-backed, and service-backed resolvers.** Validated against real notnaked Order services (below): most needed data is raw fields + relationships. The shipped service-backed resolvers are `Order.itemCount` (`get#OrderItemCount`) and the `inventoryLevels` root (`get#InventoryLevels`); `customerName` was reclassified to the view-backed leaf edge `Order.billToCustomer` (the leaf-over-service rule). A field/edge may declare `resolver-service`; types may map to **view-entities** (free joins). Live external assembly (e.g. Shopify GraphQL calls) stays **out** — that is federation, not a DB-backed graph. |
+| 12 | Computed/assembled data | **Four field kinds: entity-backed, view-entity-backed, aggregate-field, and service-backed resolvers.** Validated against real notnaked Order services (below): most needed data is raw fields + relationships. The shipped service-backed resolver is the `inventoryLevels` root (`get#InventoryLevels`); `customerName` was reclassified to the view-backed leaf edge `Order.billToCustomer` (`customerName`→`billToCustomer`, service→view), and `itemCount` was reclassified to the **aggregate field** `Order.orderItemCount` (`itemCount`→`orderItemCount`, service→SQL aggregate). An **aggregate field** declares `aggregate="count-distinct"` (+`aggregate-entity`/`aggregate-fk`/`aggregate-field`): when selected, the root resolvers add a `sub-select` member to an `EntityDynamicView` — a **LATERAL** subquery on mysql8 (`from-lateral-style="lateral"`) — so the value (e.g. `COUNT(DISTINCT externalId)`) comes back as a column with no schema-builder/fetcher change; **mysql8/LATERAL-dependent**; v1 scope is the list + by-pk roots (`orderByIdentification`/nested-`Order` return `null`). A field/edge may declare `resolver-service`; types may map to **view-entities** (free joins). Live external assembly (e.g. Shopify GraphQL calls) stays **out** — that is federation, not a DB-backed graph. |
 
 ### Load isolation (decision 9) — the primary blast-radius control
 
@@ -125,7 +125,7 @@ consumers need falls into three categories:
   covered by the entity-backed field/edge model.
 - **(B) Computed** — fields derived by genuine logic over multiple entities. Illustrative computation candidates: `itemFulfillmentStatus` (a state machine over approved/completed/cancelled
   counts + returns, `ofbiz-oms-usl/.../OrderServices.xml:2861-2993`),
-  `orderItemCompletedDatetime` (filtered status lookup). The only computed field shipped so far is `Order.itemCount` (an aggregate count via `get#OrderItemCount`). NOTE: `customerName` (party→Person
+  `orderItemCompletedDatetime` (filtered status lookup). The order line count `Order.itemCount` (formerly a `get#OrderItemCount` service field) is now the **aggregate field** `Order.orderItemCount` — `COUNT(DISTINCT OrderItem.externalId)` via a lazy LATERAL sub-select, not a per-row service call (an aggregate-field kind, distinct from category B). NOTE: `customerName` (party→Person
   concat) is **not** in this category — a join + concat is leaf data (see the leaf-over-service
   rule below), now `Order.billToCustomer`. Genuine joins use **view-entities**
   (`OrderItemDetail` (illustrative), `ReturnItemView` (illustrative), `OrderBillToCustomer`).
@@ -167,9 +167,13 @@ external systems, or values with no stable column form.
   It is now the view-backed has-one `Order.billToCustomer { partyId firstName lastName }`; the
   client builds the display name. This drops a flat-25, analyzer-opaque cost to a deterministic
   ~4 and removes a per-request service call.
+- *Counter-example, retired:* `Order.itemCount` was service-backed (`get#OrderItemCount`, a `COUNT`)
+  but a single-entity aggregate has a stable SQL form, so it is now the **aggregate field**
+  `Order.orderItemCount` — `COUNT(DISTINCT OrderItem.externalId)` via a lazy LATERAL sub-select added
+  to the order query only when selected (charged `gql.aggregateFieldCost`, not the flat service cost).
 - *Legitimate service-backed:* `inventoryLevels` (ATP aggregation + safety-stock/store rules),
-  `itemFulfillmentStatus` (state machine), `Order.itemCount` (an aggregate count). These are not
-  expressible as a leaf join.
+  `itemFulfillmentStatus` (state machine). These are not expressible as a leaf join or a single-entity
+  SQL aggregate.
 
 Why it matters: leaf fields are **statically cost-analyzable and cheaper**; service-backed
 fields are an analyzer blind spot charged a flat high cost. Pushing presentation/derivation to

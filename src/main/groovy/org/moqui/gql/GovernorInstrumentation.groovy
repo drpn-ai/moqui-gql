@@ -49,6 +49,7 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     private final IndexClassifier indexClassifier
     private final SearchQueryParser searchParser = new SearchQueryParser()
     final int maxDepth, maxCost, maxFirst, serviceBatchKeyLimit, maxInventoryKeys, unindexedFilterPenalty, serviceFixedCost
+    final int aggregateFieldCost
     private final long wallClockBudgetMs
     private final long deadlineNanos
     private final int bucketSize, restoreRate
@@ -64,6 +65,7 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
         this.maxDepth = cfg.maxDepth; this.maxCost = cfg.maxCost; this.maxFirst = cfg.maxFirst
         this.serviceBatchKeyLimit = cfg.serviceBatchKeyLimit; this.maxInventoryKeys = cfg.maxInventoryKeys
         this.unindexedFilterPenalty = cfg.unindexedFilterPenalty; this.serviceFixedCost = cfg.serviceFixedCost
+        this.aggregateFieldCost = (cfg.aggregateFieldCost != null ? cfg.aggregateFieldCost : 5)
         this.wallClockBudgetMs = (cfg.wallClockBudgetMs != null ? cfg.wallClockBudgetMs : 30000)
         this.bucketSize = (cfg.bucketSize != null ? cfg.bucketSize : maxCost)
         this.restoreRate = (cfg.restoreRate != null ? cfg.restoreRate : 50)
@@ -162,8 +164,11 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
                 return sat((long) serviceFixedCost + child)
             }
 
-            // ---- service-backed scalar/object field (decision 12) ----
+            // ---- aggregate field (decision 12): a lazy LATERAL sub-select, not a free scalar ----
             GqlField gf = (!atRoot) ? art.types.get(parentType.getName())?.fields?.get(field.getName()) : null
+            if (gf != null && gf.isAggregate()) return (long) aggregateFieldCost
+
+            // ---- service-backed scalar/object field (decision 12) ----
             if (gf != null && gf.isServiceBacked()) {
                 if (fanout > serviceBatchKeyLimit) errors.add(err(
                         "service-backed field '" + field.getName() + "' would resolve " + fanout + " keys; exceeds batch limit " + serviceBatchKeyLimit,

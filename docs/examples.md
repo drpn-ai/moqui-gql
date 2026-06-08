@@ -94,7 +94,7 @@ query Orders {
 ```graphql
 query OrderDetail($orderId: ID!) {
   order(orderId: $orderId) {
-    orderName statusId orderDate grandTotal currencyUomId itemCount billToCustomer { partyId firstName lastName }
+    orderName statusId orderDate grandTotal currencyUomId orderItemCount billToCustomer { partyId firstName lastName }
     orderItems(first: 50) { edges { node { orderItemSeqId productId quantity unitPrice statusId promisedDate } } }
     shipGroups(first: 10) { edges { node { shipGroupSeqId shipmentMethodTypeId carrierPartyId trackingCode facility { facilityName } } } }
     statuses(first: 50) { statusId statusDatetime }
@@ -104,7 +104,7 @@ Variables: `{ "orderId": "10001" }`
 ```json
 { "data": { "order": {
   "orderName": "NN10001", "statusId": "ORDER_APPROVED", "orderDate": "2026-05-14T09:32:00Z",
-  "grandTotal": "129.00", "currencyUomId": "USD", "itemCount": 2, "billToCustomer": { "partyId": "CUST_88", "firstName": "Jordan", "lastName": "Lee" },
+  "grandTotal": "129.00", "currencyUomId": "USD", "orderItemCount": 2, "billToCustomer": { "partyId": "CUST_88", "firstName": "Jordan", "lastName": "Lee" },
   "orderItems": { "edges": [
     { "node": { "orderItemSeqId": "00001", "productId": "NN-HOODIE-BLK-M", "quantity": 1, "unitPrice": "89.00", "statusId": "ITEM_APPROVED", "promisedDate": "2026-05-20T00:00:00Z" } },
     { "node": { "orderItemSeqId": "00002", "productId": "NN-SOCK-3PK", "quantity": 2, "unitPrice": "20.00", "statusId": "ITEM_COMPLETED", "promisedDate": "2026-05-18T00:00:00Z" } } ] },
@@ -114,7 +114,7 @@ Variables: `{ "orderId": "10001" }`
   "extensions": { "cost": { "requestedQueryCost": 173, "actualQueryCost": 173,
     "throttleStatus": { "maximumAvailable": 1000, "currentlyAvailable": 827, "restoreRate": 50 } } } }
 ```
-**maps:** OrderHeader + connections + plain lists; `billToCustomer` a view-backed leaf edge {partyId, firstName, lastName} (client composes the display name); `itemCount` service-backed · **kind:** `[DB][VIEW][SERVICE]` · **cost:** moderate (illustrative) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`.
+**maps:** OrderHeader + connections + plain lists; `billToCustomer` a view-backed leaf edge {partyId, firstName, lastName} (client composes the display name); `orderItemCount` an aggregate field — `COUNT(DISTINCT OrderItem.externalId)` = number of distinct Shopify order lines (exploded OMS items from one Shopify line share `externalId`), resolved as a lazy LATERAL sub-select added to the order query only when selected, `0` for orders with no/no-Shopify items · **kind:** `[DB][VIEW][AGG]` · **cost:** moderate (illustrative; the aggregate field adds `gql.aggregateFieldCost`) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`.
 
 ### A2 — Open-orders queue, first page
 ```graphql

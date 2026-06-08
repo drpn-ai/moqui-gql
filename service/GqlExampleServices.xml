@@ -7,18 +7,11 @@
     -->
     <!-- get#OrderCustomerName was RETIRED: customer name is a join + concat, not genuine computation,
          so it is now the view-backed Order.billToCustomer leaf object (leaf-over-service, design.md
-         decision 12). A legitimate service-backed FIELD must be a real computation — e.g. an aggregate
-         like this item count, which is not a leaf column and not a simple relationship traversal. -->
-    <service verb="get" noun="OrderItemCount" authenticate="false">
-        <description>Count of items on an order — an aggregation (legitimate service-backed field example).</description>
-        <in-parameters><parameter name="orderId" required="true"/></in-parameters>
-        <out-parameters><parameter name="itemCount" type="Integer"/></out-parameters>
-        <actions>
-            <entity-find-count entity-name="org.apache.ofbiz.order.order.OrderItem" count-field="itemCount">
-                <econdition field-name="orderId"/>
-            </entity-find-count>
-        </actions>
-    </service>
+         decision 12). get#OrderItemCount was likewise RETIRED (#37): the order line count is now the
+         lazy LATERAL aggregate Order.orderItemCount (COUNT(DISTINCT externalId)) — an aggregate-field
+         kind, not a per-row service call. The service-backed-field CAPABILITY (ServiceBackedLoader, the
+         resolver-service field kind, the governor's service-field branch) is retained and covered by
+         ServiceBackedLoaderTests; it currently has no production schema user. -->
 
     <service verb="get" noun="InventoryLevels" authenticate="false">
         <description>ATP/on-hand per product, summed from InventoryItem (service-backed ROOT example).
@@ -46,6 +39,16 @@
                 <script>inventoryLevels.add([productId: pid, facilityId: singleFac, availableToPromise: atp, quantityOnHand: ohq])</script>
             </iterate>
         </actions>
+    </service>
+
+    <!-- Test-only single-in/single-out echo: keeps the service-backed-field CAPABILITY regression-covered
+         (ServiceBackedLoaderTests) after the only production service-backed field (itemCount) was retired
+         (#37). authenticate="false" so the loader unit test can call it without a logged-in user (core
+         BasicServices.echo#Data requires login). Not referenced by any schema field. -->
+    <service verb="echo" noun="GqlField" authenticate="false">
+        <in-parameters><parameter name="value"/></in-parameters>
+        <out-parameters><parameter name="value"/></out-parameters>
+        <actions><!-- value passes straight through (in == out) --></actions>
     </service>
 
     <!-- Idempotent test-data generator: ensure N sales Shipments exist (linked to real orders) so the

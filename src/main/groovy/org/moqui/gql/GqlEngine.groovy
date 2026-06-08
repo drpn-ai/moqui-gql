@@ -11,6 +11,7 @@ import graphql.schema.GraphQLSchema
 import org.dataloader.DataLoaderFactory
 import org.dataloader.DataLoaderRegistry
 import org.moqui.context.ExecutionContext
+import org.moqui.gql.exec.AggregateViewBuilder
 import org.moqui.gql.exec.ConnectionResolver
 import org.moqui.gql.exec.NestedConnectionLoader
 import org.moqui.gql.exec.NestedEdgeMeta
@@ -60,12 +61,26 @@ class GqlEngine {
                 maxInventoryKeys     : (sysOr("gql.maxInventoryKeys", "500")) as int,
                 unindexedFilterPenalty: (sysOr("gql.unindexedFilterPenalty", "50")) as int,
                 serviceFixedCost     : (sysOr("gql.serviceFixedCost", "25")) as int,
+                aggregateFieldCost   : (sysOr("gql.aggregateFieldCost", "5")) as int,
                 wallClockBudgetMs    : (sysOr("gql.wallClockBudgetMs", "30000")) as int,
                 bucketSize           : (sysOr("gql.throttle.bucketSize", sysOr("gql.maxCost", "1000"))) as int,
                 restoreRate          : (sysOr("gql.throttleRestoreRate", "50")) as int]
     }
 
     private static String sysOr(String n, String d) { String v = System.getProperty(n); return v != null ? v : d }
+
+    /** Aggregate fields of `tt` that appear in this selection (lazy: only these get a sub-select member).
+     *  Connection roots select under edges/node/<f>; by-pk/by-id select <f> directly. */
+    private static List<GqlField> requestedAggregates(GqlType tt, graphql.schema.DataFetchingEnvironment env, boolean connection) {
+        List<GqlField> out = new ArrayList<GqlField>()
+        if (tt == null) return out
+        def sel = env.getSelectionSet()
+        for (GqlField f in tt.fields.values()) {
+            if (!f.isAggregate()) continue
+            if (sel.contains(connection ? ("edges/node/" + f.name) : f.name)) out.add(f)
+        }
+        return out
+    }
 
     Map execute(String query, Map variables, String operationName) {
         long startMs = System.currentTimeMillis()
@@ -279,7 +294,7 @@ class GqlEngine {
                 code.dataFetcher(FieldCoordinates.coordinates("Query", rq.name),
                         ({ DataFetchingEnvironment env ->
                             new ConnectionResolver(ec, useClone, queryTimeoutSeconds, maxFirst)
-                                    .resolveRoot(rq, tt, env.getArguments())
+                                    .resolveRoot(rq, tt, env.getArguments(), requestedAggregates(tt, env, true))
                         } as DataFetcher))
             } else if (rq.byIdentification) {
                 String targetEntity = rq.entityName ?: (tt != null ? tt.entityName : null)
@@ -310,7 +325,9 @@ class GqlEngine {
                 code.dataFetcher(FieldCoordinates.coordinates("Query", rq.name),
                         ({ DataFetchingEnvironment env ->
                             if (entityName == null) return null
-                            def find = ec.entity.find(entityName)
+                            List<GqlField> aggs = requestedAggregates(tt, env, false)
+                            def find = aggs.isEmpty() ? ec.entity.find(entityName) :
+                                    AggregateViewBuilder.aggregateFind(ec, entityName, aggs)
                             def idVal = env.getArgument(pkArg)
                             if (idVal != null) {
                                 find.condition(pkArg, idVal)

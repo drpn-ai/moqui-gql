@@ -15,6 +15,13 @@ class GqlField {
      *  Defaults to the field name when unset. */
     String resolverOut = null
     boolean isServiceBacked() { return resolverService != null && !resolverService.isEmpty() }
+    // Aggregate-field kind (decision 12): the value is a lazy SQL aggregate added to the parent query as a
+    // sub-select (LATERAL on mysql8) only when the field is selected — not a column, service, or relationship.
+    String aggregateFunction      // e.g. "count-distinct", "count", "sum"
+    String aggregateEntity        // fully-qualified child entity, e.g. org.apache.ofbiz.order.order.OrderItem
+    String aggregateFk            // child field that joins to the parent PK, e.g. orderId
+    String aggregateField         // child field the function is applied to, e.g. externalId
+    boolean isAggregate() { return aggregateFunction != null && !aggregateFunction.isEmpty() }
 }
 
 @CompileStatic

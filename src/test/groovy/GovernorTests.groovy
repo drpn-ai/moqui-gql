@@ -83,15 +83,19 @@ class GovernorTests extends Specification {
         r.data?.order == null
     }
 
-    def "N6 — service-backed field under a wide list trips BATCH_LIMIT_EXCEEDED"() {
-        given:
-        System.setProperty("gql.serviceBatchKeyLimit", "5")   // fan-out 10 > 5
+    // N6 (service-backed field under a wide list trips BATCH_LIMIT_EXCEEDED) was REMOVED with the
+    // retirement of itemCount (#37): no service-backed field remains in the schema to exercise it. The
+    // service-backed governor branch is still live code; the inventoryLevels case below covers the
+    // BATCH_LIMIT_EXCEEDED path for the surviving service-backed root.
+
+    def "selecting an aggregate field (orderItemCount) adds aggregateFieldCost to the query cost"() {
         when:
-        def r = new GqlEngine(ec).execute('query { orders(first:10){ edges{ node{ orderId itemCount } } } }', [:], null)
+        def without = new GqlEngine(ec).execute('query Q($id:ID!){ order(orderId:$id){ orderId } }', [id: sampleOrderId], "Q")
+        def with = new GqlEngine(ec).execute('query Q($id:ID!){ order(orderId:$id){ orderId orderItemCount } }', [id: sampleOrderId], "Q")
         then:
-        hasCode(r, "BATCH_LIMIT_EXCEEDED")
-        r.errors.find { it.extensions?.code == "BATCH_LIMIT_EXCEEDED" }.extensions.field == "itemCount"
-        r.data?.orders == null
+        without.errors.isEmpty() && with.errors.isEmpty()
+        // aggregate field is charged aggregateFieldCost (default 5), not a free/scalar(1) cost
+        (with.extensions.cost.requestedQueryCost as long) - (without.extensions.cost.requestedQueryCost as long) == 5L
     }
 
     def "wall-clock budget exceeded aborts mid-fetch with DEADLINE_EXCEEDED"() {

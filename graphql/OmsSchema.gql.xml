@@ -14,11 +14,12 @@
         <field name="grandTotal" entity-field="grandTotal" type="Decimal"/>
         <field name="currencyUomId" entity-field="currencyUom"/>
         <field name="productStoreId" entity-field="productStoreId"/>
-        <!-- service-backed field (decision 12): a genuine aggregation (count), not a leaf column or a
-             join — opaque to static cost, resolved through a batched DataLoader. -->
-        <field name="itemCount" type="Int"
-               resolver-service="GqlExampleServices.get#OrderItemCount"
-               resolver-in="orderId" resolver-out="itemCount"/>
+        <!-- aggregate field (lazy LATERAL): number of distinct Shopify order lines. Exploded OMS items
+             from one Shopify line share OrderItem.externalId, so COUNT(DISTINCT externalId) = line count.
+             Resolved by a sub-select member added to the dynamic view only when this field is selected. -->
+        <field name="orderItemCount" type="Int"
+               aggregate="count-distinct" aggregate-entity="org.apache.ofbiz.order.order.OrderItem"
+               aggregate-fk="orderId" aggregate-field="externalId"/>
         <!-- has-one leaf object (was the service-backed customerName): the BILL_TO customer's leaf
              columns via a 1:1 view; the client composes the display name. Deterministic cost, no
              service call (leaf-over-service rule, design.md decision 12). -->

@@ -21,7 +21,11 @@ class SchemaArtifactParser {
                             costOverride: asInt(fn.attribute("cost")),
                             resolverService: fn.attribute("resolver-service"),
                             resolverIn: splitList(fn.attribute("resolver-in")),
-                            resolverOut: fn.attribute("resolver-out")))
+                            resolverOut: fn.attribute("resolver-out"),
+                            aggregateFunction: fn.attribute("aggregate"),
+                            aggregateEntity: fn.attribute("aggregate-entity"),
+                            aggregateFk: fn.attribute("aggregate-fk"),
+                            aggregateField: fn.attribute("aggregate-field")))
                 }
                 for (MNode en in tn.children("edge")) {
                     t.edges.put(en.attribute("name"), new GqlEdge(

@@ -4,11 +4,11 @@ A curated, **read-only GraphQL layer** over the HotWax/Maarg OMS data model, mod
 Admin API (query language + `extensions.cost`), fronted by a **cost governor** so internal apps, AI
 agents, and partners can fetch nested OMS data without harming the system.
 
-**Status:** Phases 1, 1.5, 2, and 3 complete and merged to `main`. **75 tests pass** across 27 classes,
+**Status:** Phases 1, 1.5, 2, and 3 complete and merged to `main`. **82 tests pass** across 28 classes,
 all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The only
 outstanding item is a framework dependency (see below).
 
-Last updated: 2026-06-06.
+Last updated: 2026-06-09.
 
 ---
 
@@ -38,6 +38,10 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 - **`customerName` → `billToCustomer`**: the service-backed `customerName` became a view-backed has-one leaf edge (`{partyId, firstName, lastName}`); the **leaf-over-service rule** is codified in `design.md` decision 12
 - **Runtime deploy + HTTP verification**: a `deployToLib` task builds the component jar; `POST /rest/s1/graphql` exercised end-to-end over real HTTP (billToCustomer, the prepared-statement cache, and the live throttle bucket)
 
+### Aggregate-field kind (#37)
+- **`Order.itemCount` → `Order.orderItemCount`**: the service-backed item count became a new **aggregate-field** kind — a lazy SQL aggregate (`COUNT(DISTINCT OrderItem.externalId)` = number of distinct Shopify order lines) added to the order query as a `sub-select` member (a **LATERAL** subquery on mysql8) **only when the field is selected**. No schema-builder/fetcher change: the value rides in as a column. Resolved on the `orders` list and `order(orderId:)` roots; charged `gql.aggregateFieldCost` by the governor.
+- `get#OrderItemCount` retired; the service-backed-field capability is retained (engine + governor branch) and covered by `ServiceBackedLoaderTests`. v1 scope: `orderByIdentification` and nested-`Order` nodes return `orderItemCount: null`. mysql8/LATERAL-dependent.
+
 ---
 
 ## Capabilities
@@ -46,7 +50,7 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 |---|---|
 | Query language | Shopify-style `query:` search (declared keys + comparators), `sortKey`+`reverse`, Relay connections — over our OMS field names |
 | Pagination | Keyset cursors, forward + backward, single- and composite-PK; no OFFSET (deep pages stay flat-cost) |
-| Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`), service-backed fields (`Order.itemCount`) and roots (`inventoryLevels`), view-backed has-one leaf edges (`Order.billToCustomer`) |
+| Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`), **aggregate fields** (`Order.orderItemCount` — lazy LATERAL `COUNT(DISTINCT externalId)`, added to the query only when selected), service-backed roots (`inventoryLevels`), view-backed has-one leaf edges (`Order.billToCustomer`). The service-backed **field** kind is retained (engine + governor branch) but currently has no schema user after `Order.itemCount`→`orderItemCount` (#37); its capability is covered by `ServiceBackedLoaderTests` |
 | Batching | DataLoader — one `WHERE fk IN(:keys)` per level (no N+1) for connections, plain lists, and service calls |
 | External-id | `order(externalId:)`, `order.identifications`, `orderByIdentification`, `facility(externalId:)` |
 | Governor | Pre-execution gate (nothing hits the DB on reject) with stable `extensions.code`; runtime `queryTimeout` + per-level row caps + wall-clock deadline |

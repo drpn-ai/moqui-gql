@@ -7,6 +7,7 @@
     <default-property name="gql.maxFirst" value="100"/>            <!-- caps EVERY connection + nested edge first/last -->
     <default-property name="gql.unindexedFilterPenalty" value="50"/>
     <default-property name="gql.serviceFixedCost" value="25"/>
+    <default-property name="gql.aggregateFieldCost" value="5"/>      <!-- a selected aggregate field adds a LATERAL sub-select; not a free scalar -->
     <default-property name="gql.serviceBatchKeyLimit" value="1000"/>
     <default-property name="gql.maxInventoryKeys" value="500"/>
     <default-property name="gql.queryTimeoutSeconds" value="20"/>

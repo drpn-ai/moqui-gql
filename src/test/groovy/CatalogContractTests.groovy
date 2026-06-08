@@ -50,10 +50,10 @@ class CatalogContractTests extends Specification {
         r.extensions.cost.requestedQueryCost != null
     }
 
-    def "L — order(orderId) with orderItems connection + identifications plain list + service field"() {
+    def "L — order(orderId) with orderItems connection + identifications plain list + aggregate field"() {
         when:
         def r = engine.execute('''query Q($id:ID!){ order(orderId:$id){
-            orderId orderName itemCount billToCustomer { firstName lastName }
+            orderId orderName orderItemCount billToCustomer { firstName lastName }
             orderItems(first:5){ edges{ node{ orderItemSeqId productId quantity unitPrice } } }
             identifications(first:10){ orderIdentificationTypeId idValue } } }''', [id: orderWithItems], "Q")
         then:
