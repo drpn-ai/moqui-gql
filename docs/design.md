@@ -460,3 +460,19 @@ out of scope (federation).
 **UNRESOLVED:** none — all 5 findings resolved into the spec.
 
 **VERDICT:** ENG REVIEW CLEARED — architecture and test surface locked. Ready to write the implementation plan (`writing-plans`).
+
+## Schema-contract maintenance (built ⊆ contract, test-enforced)
+
+`docs/schema.graphql` is the SDL **contract** and is allowed to be a **superset** — it documents
+designed-but-unbuilt surface (decision surface). `graphql/OmsSchema.gql.xml` is what is actually
+**built**. `SchemaContractTests` (Spock, in the suite) enforces **built ⊆ contract**: every type,
+field, root query, argument, enum value, and custom scalar the engine exposes MUST be declared in
+`docs/schema.graphql`. It ignores nullability, directives (`@search`/`@cost`/`@service` are doc-only),
+descriptions, default values, scalar field types, and order.
+
+**Rule:** any PR that adds or changes a type/field/root/arg/enum in `graphql/OmsSchema.gql.xml` MUST
+update `docs/schema.graphql` in the same PR — otherwise `SchemaContractTests` fails. To see exactly
+what is undocumented, run the suite and read the `[schema-contract] undocumented ...` lines; for the
+full built surface, see `build/reports/built-schema.graphql` (the Task-4 diagnostic). This is the
+executable form of the contract-first decision (epic #46 decision 3): features #35/#37/#38/#43 each
+update both sides together, and this test guarantees they do.

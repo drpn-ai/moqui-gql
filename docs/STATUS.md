@@ -83,6 +83,8 @@ BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, Invent
 
 Run: `./gradlew :runtime:component:moqui-gql:test`
 
+- **Schema contract**: `docs/schema.graphql` is enforced as a superset of the built schema by `SchemaContractTests` (built ⊆ contract). Schema changes must update the SDL in the same PR.
+
 ---
 
 ## Notes & engineering calls

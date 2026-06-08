@@ -11,7 +11,7 @@ import org.moqui.Moqui
         GovernorTests.class, EndpointTests.class, ScopeSeamTests.class, ConnectionWalkTests.class,
         CatalogContractTests.class, OrderDetailEdgesTests.class, ProductFacilityTests.class,
         ThrottleGateTests.class, ThrottleE2ETests.class, CallerProfileTests.class, PreparsedCacheTests.class,
-        BillToCustomerTests.class ])
+        BillToCustomerTests.class, SchemaContractTests.class ])
 class MoquiSuite {
     @AfterAll
     static void destroyMoqui() { Moqui.destroyActiveExecutionContextFactory() }
