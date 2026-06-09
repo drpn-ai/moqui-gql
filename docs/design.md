@@ -485,3 +485,26 @@ what is undocumented, run the suite and read the `[schema-contract] undocumented
 full built surface, see `build/reports/built-schema.graphql` (the Task-4 diagnostic). This is the
 executable form of the contract-first decision (epic #46 decision 3): features #35/#37/#38/#43 each
 update both sides together, and this test guarantees they do.
+
+## Data-model conventions (OMS) — enshrined for future modeling
+
+The graph maps to the HotWax/OFBiz OMS model. These conventions are load-bearing for the edges and
+views above; future schema work must follow them (they also live in the project `CLAUDE.md`):
+
+- **Ship-group items are organized by `OrderItem.shipGroupSeqId`, never `OrderItemShipGroupAssoc`.**
+  `OrderItem` carries `shipGroupSeqId` directly (a HotWax extension, never null); the
+  `OrderItemShipGroup.items` relationship is keyed `(orderId, shipGroupSeqId)`. Do **not** model
+  ship-group↔item membership through `OrderItemShipGroupAssoc` — it is not used here. (`ShipGroup.orderItems`, #38.)
+- **`OrderItemShipGroup` PK is `(orderId, shipGroupSeqId)`** — composite-keyed children (e.g.
+  `OrderFacilityChange` via the `facilityChanges` relationship) join on that pair. (`ShipGroup.facilityChangeHistory`, #43.)
+- **Resolve the shipping method via `ShipmentMethodType` (single-key `shipmentMethodTypeId`), not the
+  composite-PK `CarrierShipmentMethod`.** A ship group's `carrierPartyId` is frequently the `_NA_`
+  placeholder on Shopify-imported orders (`prepareTransformedShopifyOrderPayload.groovy`), so a 3-field
+  carrier lookup would frequently miss. Carrier identity, when needed, is the `ShipGroup.carrierPartyId`
+  scalar. (`ShipGroup.shippingMethod`, #43.)
+- **Inventory is read through the current-item pointer, never summed.** The OMS keeps one current
+  `InventoryItem` per `(product, facility)`, addressed by `ProductFacility.inventoryItemId`
+  (`rolloverInventoryItems` consolidates older items). Read availability via
+  `ProductFacilityInventoryItemView` (ProductFacility → current InventoryItem), driven by
+  `ProductFacility` — a row per configured product+facility; ATP/QOH are `0`, never null, when
+  unstocked. Do **not** sum `InventoryItem` rows. (`inventoryLevels`, #35.)

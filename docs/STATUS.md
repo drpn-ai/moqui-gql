@@ -4,7 +4,7 @@ A curated, **read-only GraphQL layer** over the HotWax/Maarg OMS data model, mod
 Admin API (query language + `extensions.cost`), fronted by a **cost governor** so internal apps, AI
 agents, and partners can fetch nested OMS data without harming the system.
 
-**Status:** Phases 1, 1.5, 2, and 3 complete and merged to `main`. **89 tests pass (1 skipped)** across
+**Status:** Phases 1, 1.5, 2, 3, and epic #46 complete and merged to `main`. **92 tests pass (3 skipped)** across
 31 classes, all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The
 only outstanding item is a framework dependency (see below).
 
@@ -86,12 +86,14 @@ and the #43 `ShipGroup` detail edges:
 | Composite-key batching (#38) | `ShipGroupItemsTests` (4) — `order → shipGroups → orderItems` batched per `(orderId, shipGroupSeqId)`, items match DB ground truth (no cross-order/cross-group leakage); `order.shipGroups` excludes empty groups (data-exercised) |
 | ShipGroup detail edges (#43) | `ShipGroupDetailEdgesTests` (4; 1 skipped) — `shipFromAddress` (+lat/long, single-key has-one), `shippingMethod` (single-key has-one, data-exercised: 473 ship groups), `facilityChangeHistory` (composite-key has-many, wiring-verified — no change-bearing ship group has items in `hcsd_notnaked`, so all are dropped by exclude-empty; the ground-truth test skips until such data exists) |
 | Resolver kinds | `PartyConnectionTests` (4), `ServiceBackedLoaderTests` (2), `InventoryLevelsTests` (5) — view-backed connection: 0-not-null totals, productId/facilityId filters (data-skipped if `ProductFacility` empty), composite-PK keyset, `FIRST_REQUIRED` — `OrderDetailEdgesTests` (1), `ProductFacilityTests` (2) |
+| Aggregate field (#37) | `OrderItemCountTests` (3) — `Order.orderItemCount` lazy LATERAL `COUNT(DISTINCT externalId)` added to the query only when selected; resolved on `orders` + `order(orderId:)` roots, charged `gql.aggregateFieldCost` |
 | External-id | `ExternalIdTests` (4) |
 | Endpoint + observability | `EndpointTests` (4) — service, cost shape, ALLOWED + REJECTED logging |
 | Phase 2 | `ThrottleGateTests` (1), `ThrottleE2ETests` (1), `CallerProfileTests` (2) |
 | Phase 3 | `PreparsedCacheTests` (3), `BillToCustomerTests` (2) |
 | Scope seam | `ScopeSeamTests` (3) — invoked per find, restricts rows, batch cardinality (no N+1) |
 | Catalog contract | `CatalogContractTests` (6) — A2/E/J/L + shipments-with-data + returns |
+| Schema contract (#49) | `SchemaContractTests` (4) — built schema ⊆ `docs/schema.graphql`; the SDL is enforced as a superset of the built schema |
 | Unit / scaffold | Scalars, SchemaArtifactParser, SearchQueryParser (4), CostModel, IndexClassifier, GqlSchemaBuilder, GqlToolFactory, QueryTimeout (2), ScaffoldSmoke (3), ShipmentRoot (3) |
 
 Run: `./gradlew :runtime:component:moqui-gql:test`
