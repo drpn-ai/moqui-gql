@@ -116,6 +116,31 @@ Variables: `{ "orderId": "10001" }`
 ```
 **maps:** OrderHeader + connections + plain lists; `billToCustomer` a view-backed leaf edge {partyId, firstName, lastName} (client composes the display name); `orderItemCount` an aggregate field — `COUNT(DISTINCT OrderItem.externalId)` = number of distinct Shopify order lines (exploded OMS items from one Shopify line share `externalId`), resolved as a lazy LATERAL sub-select added to the order query only when selected, `0` for orders with no/no-Shopify items · **kind:** `[DB][VIEW][AGG]` · **cost:** moderate (illustrative; the aggregate field adds `gql.aggregateFieldCost`) · **test:** orderItems/shipGroups returned as connections (`edges[].node`); statuses/payments as plain lists; money as string `"129.00"`.
 
+### A1b — Items grouped by ship group (composite-key nested batching, #38)
+**Need:** see each ship group's own line items (e.g. a multi-warehouse order split across ship groups).
+```graphql
+query OrderItemsByShipGroup($orderId: ID!) {
+  order(orderId: $orderId) {
+    orderId
+    shipGroups(first: 10) {
+      edges { node {
+        shipGroupSeqId
+        orderItems(first: 50) { edges { node { orderItemSeqId productId quantity } } }
+      } }
+    } } }
+```
+Variables: `{ "orderId": "10001" }`
+```json
+{ "data": { "order": {
+  "orderId": "10001",
+  "shipGroups": { "edges": [
+    { "node": { "shipGroupSeqId": "00001", "orderItems": { "edges": [
+      { "node": { "orderItemSeqId": "00001", "productId": "NN-HOODIE-BLK-M", "quantity": 1 } } ] } } },
+    { "node": { "shipGroupSeqId": "00002", "orderItems": { "edges": [
+      { "node": { "orderItemSeqId": "00002", "productId": "NN-SOCK-3PK", "quantity": 2 } } ] } } } ] } } } } }
+```
+**maps:** `ShipGroup.orderItems` is a composite-key nested edge — batched per `(orderId, shipGroupSeqId)` via the `OrderItemShipGroup.items` relationship, navigating `OrderItem.shipGroupSeqId` (**not** `OrderItemShipGroupAssoc`). One query per level (no N+1), grouped by the key tuple. · **note:** `order.orderItems` (flat) and the union of `shipGroups[].orderItems` (grouped) are the **same rows** — every OrderItem has a non-null `shipGroupSeqId` (total join), so the grouped view re-partitions the flat list without adding or dropping rows. `order.shipGroups` returns **only** ship groups with ≥ 1 item (empties dropped). · **kind:** `[DB]` · **test:** `ShipGroupItemsTests` — items under each ship group equal the DB rows for that exact `(orderId, shipGroupSeqId)` (no cross-order/cross-group leakage); empty ship groups excluded.
+
 ### A2 — Open-orders queue, first page
 ```graphql
 { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2) {

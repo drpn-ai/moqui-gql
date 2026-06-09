@@ -23,14 +23,18 @@ import java.util.concurrent.CompletionStage
  * are read from any key context and applied per parent in memory. The whole batch is capped at
  * maxRowsPerLevel as a runtime guard (logged by the caller's governor in C4).
  *
- * Phase-1 scope: single-key relationships (one fk field); the intra-group key is the child PK minus
- * the fk, which is the natural ordering of children within a parent (e.g. orderItemSeqId under orderId).
+ * Keys may be single-key OR composite (multi-field): a one-field fk batches with `WHERE fk IN (:keys)`,
+ * a composite fk batches with `WHERE (fk1=? AND fk2=?) OR (...)` — one OR-of-ANDs branch per parent key
+ * tuple — and children are grouped in memory by that key tuple. The intra-group key is the child PK minus
+ * the fk fields, which is the natural ordering of children within a parent (e.g. orderItemSeqId under
+ * (orderId, shipGroupSeqId)).
  */
 @CompileStatic
 class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Object> {
     private final ExecutionContext ec
     private final String childEntityName
-    private final String fkField
+    /** child-side fk fields (parallel to the parent key). size 1 = single-key (IN); size > 1 = composite (OR-of-ANDs). */
+    private final List<String> fkFields
     private final List<String> intraGroupFields
     private final boolean useClone
     private final int queryTimeoutSeconds
@@ -38,14 +42,18 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
     private final int maxRowsPerLevel
     /** true -> return a plain [Type!]! node list per parent; false -> a Relay connection map. */
     private final boolean plainList
+    /** #38: optional — name of a child relationship ON childEntityName; when set, fetched parent rows
+     *  with zero rows in that relationship are dropped (resolved via one extra batched DISTINCT query). */
+    private final String excludeEmptyRelationship
 
-    NestedConnectionLoader(ExecutionContext ec, String childEntityName, String fkField,
+    NestedConnectionLoader(ExecutionContext ec, String childEntityName, List<String> fkFields,
                            List<String> intraGroupFields, boolean useClone, int queryTimeoutSeconds,
-                           int maxFirst, int maxRowsPerLevel, boolean plainList) {
-        this.ec = ec; this.childEntityName = childEntityName; this.fkField = fkField
+                           int maxFirst, int maxRowsPerLevel, boolean plainList, String excludeEmptyRelationship) {
+        this.ec = ec; this.childEntityName = childEntityName; this.fkFields = fkFields
         this.intraGroupFields = intraGroupFields; this.useClone = useClone
         this.queryTimeoutSeconds = queryTimeoutSeconds; this.maxFirst = maxFirst
         this.maxRowsPerLevel = maxRowsPerLevel; this.plainList = plainList
+        this.excludeEmptyRelationship = excludeEmptyRelationship
     }
 
     @Override
@@ -54,20 +62,42 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
         int first = clampN(argsMap != null ? argsMap.get("first") : null)
         String afterStr = argsMap != null ? (String) argsMap.get("after") : null
 
-        // one batched query for ALL parent keys in this level
+        // one batched query for ALL parent keys in this level: single fk field -> WHERE fk IN(:keys);
+        // composite key -> WHERE (fk1=? AND fk2=?) OR (...) — one OR-of-ANDs per parent key tuple.
+        org.moqui.entity.EntityConditionFactory ecf = ec.entity.getConditionFactory()
         EntityFind cf = ec.entity.find(childEntityName)
-                .condition(fkField, EntityCondition.IN, new ArrayList<Object>(keys))
-                .orderBy(orderByList())
-                .useClone(useClone).queryTimeout(queryTimeoutSeconds)
+        if (fkFields.size() == 1) {
+            List<Object> vals = new ArrayList<Object>()
+            for (Object k in keys) vals.add(k instanceof List ? ((List) k).get(0) : k)   // key may be raw or 1-tuple
+            cf.condition(fkFields.get(0), EntityCondition.IN, vals)
+        } else {
+            List<EntityCondition> ors = new ArrayList<EntityCondition>()
+            for (Object k in keys) {
+                List tuple = (List) k
+                List<EntityCondition> ands = new ArrayList<EntityCondition>()
+                for (int i = 0; i < fkFields.size(); i++) ands.add(ecf.makeCondition(fkFields.get(i), EntityCondition.EQUALS, tuple.get(i)))
+                ors.add(ecf.makeCondition(ands, EntityCondition.AND))
+            }
+            cf.condition(ecf.makeCondition(ors, EntityCondition.OR))
+        }
+        cf.orderBy(orderByList()).useClone(useClone).queryTimeout(queryTimeoutSeconds)
                 .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000))
         ScopeFilters.apply(cf, childEntityName, ec)   // row-scope seam (phase-1 no-op)
         EntityList rows = cf.list()
 
-        // group children by parent key, preserving the (fk, intra-group) fetch order within each group
+        // #38 exclude-empty: drop fetched rows (e.g. ship groups) that have zero rows in the named child
+        // relationship (e.g. "items"), resolved with ONE extra batched DISTINCT query (no N+1).
+        Set<Object> nonEmpty = null
+        if (excludeEmptyRelationship != null && !excludeEmptyRelationship.isEmpty() && !rows.isEmpty()) {
+            nonEmpty = nonEmptyIdentities(rows)
+        }
+
+        // group children by parent key (raw value for single fk, else a List tuple), preserving fetch order
         Map<Object, List<EntityValue>> grouped = new LinkedHashMap<Object, List<EntityValue>>()
         for (Object k in keys) grouped.put(k, new ArrayList<EntityValue>())
         for (EntityValue ev in rows) {
-            List<EntityValue> g = grouped.get(ev.get(fkField))
+            if (nonEmpty != null && !nonEmpty.contains(rowIdentity(ev))) continue   // empty -> excluded entirely
+            List<EntityValue> g = grouped.get(groupKey(ev))
             if (g != null) g.add(ev)
         }
 
@@ -119,10 +149,75 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
     }
 
     private List<String> orderByList() {
-        List<String> ob = new ArrayList<String>()
-        ob.add(fkField)
+        List<String> ob = new ArrayList<String>(fkFields)
         ob.addAll(intraGroupFields)
         return ob
+    }
+
+    /** Group key matching the DataLoader key shape: a single raw value for one fk field, else a List tuple. */
+    private Object groupKey(EntityValue ev) {
+        if (fkFields.size() == 1) return ev.get(fkFields.get(0))
+        List<Object> t = new ArrayList<Object>(fkFields.size())
+        for (String f in fkFields) t.add(ev.get(f))
+        return t
+    }
+
+    // ----- #38 exclude-empty support -----
+    // Parent-side identity fields of the exclude-empty relationship (on childEntityName), resolved once per
+    // load() in nonEmptyIdentities() and read by rowIdentity(). Single-threaded per request, so a field is safe.
+    private List<String> parentIdentityFields
+
+    /** Identity tuple of a fetched parent row (e.g. a ship group's (orderId, shipGroupSeqId)), matching the
+     *  shape returned by nonEmptyIdentities(): a single raw value for one identity field, else a List tuple. */
+    private Object rowIdentity(EntityValue ev) {
+        if (parentIdentityFields.size() == 1) return ev.get(parentIdentityFields.get(0))
+        List<Object> t = new ArrayList<Object>(parentIdentityFields.size())
+        for (String f in parentIdentityFields) t.add(ev.get(f))
+        return t
+    }
+
+    /** One extra batched DISTINCT query: of the identities present in `rows`, which have >= 1 child row in
+     *  the exclude-empty relationship. Returns the set of non-empty identity keys (raw value / List tuple). */
+    private Set<Object> nonEmptyIdentities(EntityList rows) {
+        org.moqui.impl.entity.EntityFacadeImpl efi = (org.moqui.impl.entity.EntityFacadeImpl) ec.entity
+        def ri = efi.getEntityDefinition(childEntityName).getRelationshipInfo(excludeEmptyRelationship)
+        // parent-side fields (read from the OISG row) and child-side fields (queried on OrderItem), parallel
+        this.parentIdentityFields = new ArrayList<String>(ri.keyMap.keySet())
+        List<String> childFks = new ArrayList<String>()
+        for (String pf in parentIdentityFields) childFks.add(ri.keyMap.get(pf))
+
+        // distinct candidate identities present in the fetched parent rows (de-dup the OR-of-ANDs branches)
+        Set<Object> candidates = new LinkedHashSet<Object>()
+        for (EntityValue ev in rows) candidates.add(rowIdentity(ev))
+
+        org.moqui.entity.EntityConditionFactory ecf = ec.entity.getConditionFactory()
+        EntityFind ef = ec.entity.find(ri.relatedEntityName)
+        if (childFks.size() == 1) {
+            List<Object> vals = new ArrayList<Object>()
+            for (Object c in candidates) vals.add(c instanceof List ? ((List) c).get(0) : c)
+            ef.condition(childFks.get(0), EntityCondition.IN, vals)
+        } else {
+            List<EntityCondition> ors = new ArrayList<EntityCondition>()
+            for (Object c in candidates) {
+                List tuple = (List) c
+                List<EntityCondition> ands = new ArrayList<EntityCondition>()
+                for (int i = 0; i < childFks.size(); i++) ands.add(ecf.makeCondition(childFks.get(i), EntityCondition.EQUALS, tuple.get(i)))
+                ors.add(ecf.makeCondition(ands, EntityCondition.AND))
+            }
+            ef.condition(ecf.makeCondition(ors, EntityCondition.OR))
+        }
+        for (String cf in childFks) ef.selectField(cf)
+        ef.distinct(true).useClone(useClone).queryTimeout(queryTimeoutSeconds)
+                .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000))
+        ScopeFilters.apply(ef, ri.relatedEntityName, ec)
+        EntityList found = ef.list()
+
+        Set<Object> out = new HashSet<Object>()
+        for (EntityValue ev in found) {
+            if (childFks.size() == 1) { out.add(ev.get(childFks.get(0))) }
+            else { List<Object> t = new ArrayList<Object>(childFks.size()); for (String cf in childFks) t.add(ev.get(cf)); out.add(t) }
+        }
+        return out
     }
 
     private static Map pickArgs(Map<Object, Object> keyContexts) {

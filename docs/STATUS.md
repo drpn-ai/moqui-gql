@@ -51,7 +51,7 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 | Query language | Shopify-style `query:` search (declared keys + comparators), `sortKey`+`reverse`, Relay connections — over our OMS field names |
 | Pagination | Keyset cursors, forward + backward, single- and composite-PK; no OFFSET (deep pages stay flat-cost) |
 | Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`), **aggregate fields** (`Order.orderItemCount` — lazy LATERAL `COUNT(DISTINCT externalId)`, added to the query only when selected), service-backed roots (`inventoryLevels`), view-backed has-one leaf edges (`Order.billToCustomer`). The service-backed **field** kind is retained (engine + governor branch) but currently has no schema user after `Order.itemCount`→`orderItemCount` (#37); its capability is covered by `ServiceBackedLoaderTests` |
-| Batching | DataLoader — one `WHERE fk IN(:keys)` per level (no N+1) for connections, plain lists, and service calls |
+| Batching | DataLoader — one query per level (no N+1) for connections, plain lists, and service calls. Nested has-many edges batch over **composite (multi-field) parent keys** (#38): single fk field → `WHERE fk IN(:keys)`, composite key → `OR`-of-`AND`s grouped by key tuple. `ShipGroup.orderItems` batches per `(orderId, shipGroupSeqId)`; `order.shipGroups` excludes empty groups via one extra batched `DISTINCT` query |
 | External-id | `order(externalId:)`, `order.identifications`, `orderByIdentification`, `facility(externalId:)` |
 | Governor | Pre-execution gate (nothing hits the DB on reject) with stable `extensions.code`; runtime `queryTimeout` + per-level row caps + wall-clock deadline |
 | Throttle | Live per-caller token bucket → `THROTTLED`; live `throttleStatus` |
@@ -66,6 +66,7 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 ### Schema surface
 Order, OrderItem, OrderStatus, OrderAdjustment, OrderPaymentPreference, ShipGroup, OrderIdentification,
 BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, InventoryLevel.
+Nested edges include `ShipGroup.orderItems` (#38) — items of a ship group, grouped per `(orderId, shipGroupSeqId)`.
 
 ---
 
@@ -76,6 +77,7 @@ BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, Invent
 | Engine / execution | `GqlEngineTests` (8) — by-pk, fwd/back pagination matched to DB keyset order, `query:` filtering, nested batch grouping |
 | Governor / adversarial | `GovernorTests` (9) — N1–N6, Q3b, inventory cap, wall-clock — each rejected pre-execution with the exact code + `data:null` |
 | Connection walks | `ConnectionWalkTests` (4) — page sizes 1/3/7 same ordered set, no overlap/skip; composite-PK never repeats |
+| Composite-key batching (#38) | `ShipGroupItemsTests` (4) — `order → shipGroups → orderItems` batched per `(orderId, shipGroupSeqId)`, items match DB ground truth (no cross-order/cross-group leakage); `order.shipGroups` excludes empty groups (data-exercised) |
 | Resolver kinds | `PartyConnectionTests` (4), `ServiceBackedTests` (2), `InventoryLevelsTests` (1), `OrderDetailEdgesTests` (1), `ProductFacilityTests` (2) |
 | External-id | `ExternalIdTests` (4) |
 | Endpoint + observability | `EndpointTests` (4) — service, cost shape, ALLOWED + REJECTED logging |

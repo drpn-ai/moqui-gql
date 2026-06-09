@@ -29,8 +29,9 @@
         <!-- plain bounded list (not a connection): typed external ids for this order -->
         <edge name="identifications" entity-relationship="OrderIdentification" target-type="OrderIdentification"
               list="true" kind="list" first-default="10"/>
-        <!-- ship groups: a Relay connection (composite child PK orderId+shipGroupSeqId, single-key join) -->
-        <edge name="shipGroups" entity-relationship="shipGroups" target-type="ShipGroup" list="true"/>
+        <!-- ship groups: a Relay connection (composite child PK orderId+shipGroupSeqId, single-key join).
+             #38: exclude-empty="items" drops ship groups with zero OrderItem rows (one batched DISTINCT query). -->
+        <edge name="shipGroups" entity-relationship="shipGroups" target-type="ShipGroup" list="true" exclude-empty="items"/>
         <!-- small fixed metadata: plain bounded lists -->
         <edge name="statuses" entity-relationship="statuses" target-type="OrderStatus" list="true" kind="list" first-default="50"/>
         <edge name="adjustments" entity-relationship="adjustments" target-type="OrderAdjustment" list="true" kind="list" first-default="50"/>
@@ -85,6 +86,9 @@
         <field name="carrierPartyId"/>
         <field name="facilityId"/>
         <field name="contactMechId"/>
+        <!-- composite-key nested edge (#38): items of this ship group via the OrderItemShipGroup.items
+             relationship (orderId + shipGroupSeqId), navigating OrderItem.shipGroupSeqId (NOT OrderItemShipGroupAssoc). -->
+        <edge name="orderItems" entity-relationship="items" target-type="OrderItem" list="true"/>
     </gql-type>
 
     <gql-type name="OrderItem" entity-name="org.apache.ofbiz.order.order.OrderItem">

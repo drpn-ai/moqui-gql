@@ -164,6 +164,7 @@ type Order {
   billingAddress: PostalAddress
   # connections (paginable)
   orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection! @cost(weight: 2)
+  "Ship groups of this order. Returns ONLY groups with >= 1 item (#38 exclude-empty: empty OrderItemShipGroup rows are dropped via one extra batched DISTINCT query)."
   shipGroups(first: Int, after: String, last: Int, before: String): ShipGroupConnection! @cost(weight: 2)
   returns(first: Int, after: String, last: Int, before: String): ReturnConnection!
   # plain bounded metadata lists
@@ -208,6 +209,7 @@ type ShipGroupEdge { cursor: String!  node: ShipGroup! }
 type ShipGroup {
   shipGroupSeqId: ID!  shipmentMethodTypeId: ID  carrierPartyId: ID  trackingCode: String
   facilityId: ID  contactMechId: ID  facility: Facility  picklistId: ID  picker: Person
+  "Items of this ship group. Composite-key nested edge (#38): batched per (orderId, shipGroupSeqId) via the OrderItemShipGroup.items relationship, navigating OrderItem.shipGroupSeqId — NOT OrderItemShipGroupAssoc. One query per level (no N+1)."
   orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection!
 }
 

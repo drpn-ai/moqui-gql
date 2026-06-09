@@ -196,19 +196,23 @@ class GqlEngine {
                 }
                 if (!e.list) continue
                 def ri = parentEd.getRelationshipInfo(e.entityRelationship)
-                if (ri == null || ri.keyMap == null || ri.keyMap.size() != 1) {
+                if (ri == null || ri.keyMap == null || ri.keyMap.isEmpty()) {
                     ec.logger.warn("gql: nested edge ${t.name}.${e.name} not batchable (relationship " +
-                            "'${e.entityRelationship}' missing or composite-key); skipping nested resolution")
+                            "'${e.entityRelationship}' missing); skipping nested resolution")
                     continue
                 }
-                String parentKeyField = ri.keyMap.keySet().iterator().next()
-                String fkField = ri.keyMap.get(parentKeyField)
+                // #38: capture the FULL join key (size 1 = single-key, identical behavior; size > 1 = composite).
+                List<String> parentKeyFields = new ArrayList<>(ri.keyMap.keySet())          // parent-side, key-map order
+                List<String> fkFields = new ArrayList<>()                                   // child-side, parallel
+                for (String pkf in parentKeyFields) fkFields.add(ri.keyMap.get(pkf))
                 List<String> childPk = new ArrayList<>(ri.relatedEd.getPkFieldNames())
-                List<String> intra = new ArrayList<>(childPk); intra.remove(fkField)
-                if (intra.isEmpty()) intra = childPk   // degenerate: fk is the entire PK
+                List<String> intra = new ArrayList<>(childPk); intra.removeAll(fkFields)
+                if (intra.isEmpty()) intra = childPk   // degenerate: fk is the entire child PK
                 out.add(new NestedEdgeMeta(typeName: t.name, edgeName: e.name, loaderName: t.name + "." + e.name,
-                        parentKeyField: parentKeyField, childEntityName: ri.relatedEntityName,
-                        fkField: fkField, intraGroupFields: intra, plain: e.isPlainList()))
+                        parentKeyField: parentKeyFields.get(0), childEntityName: ri.relatedEntityName,
+                        fkField: fkFields.get(0), parentKeyFields: parentKeyFields, fkFields: fkFields,
+                        intraGroupFields: intra, plain: e.isPlainList(),
+                        excludeEmptyRelationship: e.excludeEmpty))
             }
         }
         return out
@@ -219,8 +223,9 @@ class GqlEngine {
         for (NestedEdgeMeta meta in metas) {
             def loader = meta.single ?
                     new NestedSingleLoader(ec, meta.childEntityName, meta.fkField, useClone, queryTimeoutSeconds, maxRowsPerLevel) :
-                    new NestedConnectionLoader(ec, meta.childEntityName, meta.fkField, meta.intraGroupFields,
-                            useClone, queryTimeoutSeconds, maxFirst, maxRowsPerLevel, meta.plain)
+                    new NestedConnectionLoader(ec, meta.childEntityName, meta.fkFields, meta.intraGroupFields,
+                            useClone, queryTimeoutSeconds, maxFirst, maxRowsPerLevel, meta.plain,
+                            meta.excludeEmptyRelationship)
             reg.register(meta.loaderName, DataLoaderFactory.newMappedDataLoader(loader))
         }
         // one batched loader per service-backed field (decision 12), keyed by its resolver-in tuple
@@ -271,9 +276,19 @@ class GqlEngine {
             code.dataFetcher(FieldCoordinates.coordinates(m.typeName, m.edgeName),
                     ({ DataFetchingEnvironment env ->
                         def parent = env.getSource()
-                        def pkVal = (parent instanceof Map) ? ((Map) parent).get(m.parentKeyField) : null
-                        if (pkVal == null) return null
-                        return env.getDataLoader(m.loaderName).load(pkVal, env.getArguments())
+                        if (!(parent instanceof Map)) return null
+                        Map p = (Map) parent
+                        // #38: single-key -> raw value (identical to before); composite -> a List tuple matching groupKey().
+                        Object key
+                        if (m.parentKeyFields == null || m.parentKeyFields.size() <= 1) {
+                            key = p.get(m.parentKeyField)
+                            if (key == null) return null
+                        } else {
+                            List<Object> t = new ArrayList<Object>()
+                            for (String f in m.parentKeyFields) { Object v = p.get(f); if (v == null) return null; t.add(v) }
+                            key = t
+                        }
+                        return env.getDataLoader(m.loaderName).load(key, env.getArguments())
                     } as DataFetcher))
         }
 

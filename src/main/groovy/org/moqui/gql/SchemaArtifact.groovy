@@ -40,6 +40,9 @@ class GqlEdge {
     String childEntity = null
     String fk = null
     String parentKey = null
+    /** #38: when set, this has-many list edge returns only parents that have >= 1 row in the named child
+     *  relationship (e.g. "items"); resolved with one extra batched DISTINCT query. Parsed in Task 5. */
+    String excludeEmpty = null
     boolean isServiceBacked() { return resolverService != null && !resolverService.isEmpty() }
     boolean isPlainList() { return list && "list".equals(kind) }
     boolean isConnection() { return list && !"list".equals(kind) }

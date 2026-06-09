@@ -36,7 +36,8 @@ class SchemaArtifactParser {
                             resolverService: en.attribute("resolver-service"),
                             resolverIn: splitList(en.attribute("resolver-in")),
                             single: "true".equals(en.attribute("single")), childEntity: en.attribute("entity-name"),
-                            fk: en.attribute("fk"), parentKey: en.attribute("parent-key")))
+                            fk: en.attribute("fk"), parentKey: en.attribute("parent-key"),
+                            excludeEmpty: en.attribute("exclude-empty")))
                 }
                 art.types.put(t.name, t)
                 // root-query declared inside a gql-type: target-type defaults to the enclosing type
