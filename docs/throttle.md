@@ -207,9 +207,18 @@ maximum-cost query and must then wait for refill. **1000 capacity / 50 per secon
 
 **Per-caller overrides.** A `GqlCallerProfile` (resolved from the caller's `userId` via
 `GqlCallerProfileMember`) can override the bucket per caller — `bucketSize` and `restoreRate`, along
-with `maxCost`, `maxFirst`, and `maxInventoryKeys`. A trusted internal app can be given a large, fast
+with `maxCost` and `maxFirst`. A trusted internal app can be given a large, fast
 bucket; an external partner a small, slow one. Profile lookup is defensive: any failure falls back to
 the global defaults and never fails the request.
+
+> **Retired — `maxInventoryKeys` (as of #35).** This was once an overridable per-caller knob capping
+> the number of product×facility keys a bulk-ATP `inventoryLevels` request could pass. It is **no
+> longer enforced**: #35 removed the `gql.maxInventoryKeys` governor cap and stopped reading the
+> per-caller override. `inventoryLevels` is now a normal view-backed connection (over
+> `ProductFacilityInventoryItemView`), governed by the standard connection cost / fan-out rules — the
+> same `first`/`last` bounds and cost weights as every other connection — not by a key cap. The
+> `GqlCallerProfile.maxInventoryKeys` column still exists but is vestigial (dropping it is a separate
+> schema/migration follow-up).
 
 **Tests disable it.** The test JVM sets `gql.throttle.bucketSize` to a huge value (`build.gradle`) so
 the shared `"anonymous"` caller can't deplete a 1000-point bucket across dozens of suite queries and

@@ -61,7 +61,7 @@ One caller-aware policy engine, tightened per audience.
 | 9 | Load isolation | **Dedicated, capped connection pool on a read replica** for all GraphQL reads (phase 1, first-class). Expensive/runaway queries can only starve their own bounded pool; the transactional OMS workload keeps its connections. |
 | 10 | Execution model | **One request = one thread = one read-only transaction.** `DataLoader` dispatches batches synchronously on the calling thread. Preserves Moqui's thread-bound `ExecutionContext` + transaction binding and gives a consistent read snapshot across the N batched levels. |
 | 11 | Authorization | **Cross-client isolation is a deployment property — one database per client, no shared multi-tenant DB — so no query-level cross-client scoping is needed.** Within a client's DB: (a) per-caller schema visibility driven by the policy profile (phase 2); (b) optional **party/role row-scoping** for external/partner callers who must see only their own slice (e.g. a supplier's own POs) — phase 2, tied to the partner audience. Phase 1 (internal, trusted) needs neither. The executor still exposes a **scope-filter seam** so party-scoping can be added in phase 2 without an invasive retrofit. |
-| 12 | Computed/assembled data | **Four field kinds: entity-backed, view-entity-backed, aggregate-field, and service-backed resolvers.** Validated against real notnaked Order services (below): most needed data is raw fields + relationships. The shipped service-backed resolver is the `inventoryLevels` root (`get#InventoryLevels`); `customerName` was reclassified to the view-backed leaf edge `Order.billToCustomer` (`customerName`→`billToCustomer`, service→view), and `itemCount` was reclassified to the **aggregate field** `Order.orderItemCount` (`itemCount`→`orderItemCount`, service→SQL aggregate). An **aggregate field** declares `aggregate="count-distinct"` (+`aggregate-entity`/`aggregate-fk`/`aggregate-field`): when selected, the root resolvers add a `sub-select` member to an `EntityDynamicView` — a **LATERAL** subquery on mysql8 (`from-lateral-style="lateral"`) — so the value (e.g. `COUNT(DISTINCT externalId)`) comes back as a column with no schema-builder/fetcher change; **mysql8/LATERAL-dependent**; v1 scope is the list + by-pk roots (`orderByIdentification`/nested-`Order` return `null`). A field/edge may declare `resolver-service`; types may map to **view-entities** (free joins). Live external assembly (e.g. Shopify GraphQL calls) stays **out** — that is federation, not a DB-backed graph. |
+| 12 | Computed/assembled data | **Four field kinds: entity-backed, view-entity-backed, aggregate-field, and service-backed resolvers.** Validated against real notnaked Order services (below): most needed data is raw fields + relationships. Three roots/fields that began service-backed were each reclassified to a cheaper, statically-analyzable kind: `customerName`→ the view-backed leaf edge `Order.billToCustomer` (`customerName`→`billToCustomer`, service→view); `itemCount`→ the **aggregate field** `Order.orderItemCount` (`itemCount`→`orderItemCount`, service→SQL aggregate); and `inventoryLevels`→ a **view-entity-backed connection** over `ProductFacilityInventoryItemView` (`inventoryLevels`→view-backed connection, service→view, #35) — it followed `ProductFacility.inventoryItemId` to the current item, which is a join, not computation. **No service-backed root or field remains in the built schema** (the service-backed-field capability is retained and unit-covered). An **aggregate field** declares `aggregate="count-distinct"` (+`aggregate-entity`/`aggregate-fk`/`aggregate-field`): when selected, the root resolvers add a `sub-select` member to an `EntityDynamicView` — a **LATERAL** subquery on mysql8 (`from-lateral-style="lateral"`) — so the value (e.g. `COUNT(DISTINCT externalId)`) comes back as a column with no schema-builder/fetcher change; **mysql8/LATERAL-dependent**; v1 scope is the list + by-pk roots (`orderByIdentification`/nested-`Order` return `null`). A field/edge may declare `resolver-service`; types may map to **view-entities** (free joins). Live external assembly (e.g. Shopify GraphQL calls) stays **out** — that is federation, not a DB-backed graph. |
 
 ### Load isolation (decision 9) — the primary blast-radius control
 
@@ -171,9 +171,14 @@ external systems, or values with no stable column form.
   but a single-entity aggregate has a stable SQL form, so it is now the **aggregate field**
   `Order.orderItemCount` — `COUNT(DISTINCT OrderItem.externalId)` via a lazy LATERAL sub-select added
   to the order query only when selected (charged `gql.aggregateFieldCost`, not the flat service cost).
-- *Legitimate service-backed:* `inventoryLevels` (ATP aggregation + safety-stock/store rules),
-  `itemFulfillmentStatus` (state machine). These are not expressible as a leaf join or a single-entity
-  SQL aggregate.
+- *Counter-example, retired:* the `inventoryLevels` root was service-backed (`get#InventoryLevels`, an
+  ATP/on-hand summary) but the OMS keeps **one current item per (product, facility)** addressed by
+  `ProductFacility.inventoryItemId`, so the correct read is a **join** (follow the pointer), not an
+  aggregation. It is now the view-backed Relay connection over `ProductFacilityInventoryItemView`
+  (ATP/QOH COALESCEd to 0); a normal connection cost replaces the flat service cost and the bespoke
+  inventory-key cap (#35).
+- *Legitimate service-backed:* `itemFulfillmentStatus` (a state machine). Not expressible as a leaf
+  join or a single-entity SQL aggregate. (No such field is in the built schema yet — design surface.)
 
 Why it matters: leaf fields are **statically cost-analyzable and cheaper**; service-backed
 fields are an analyzer blind spot charged a flat high cost. Pushing presentation/derivation to
@@ -259,7 +264,7 @@ the client keeps the cost model honest and the API a clean data graph.
    client.)
 5. **Runtime Guard** — wraps every execution step: JDBC query timeout, hard row
    cap that aborts mid-fetch, per-request wall-clock budget. Records actual cost.
-6. **Policy & Metering** — caller → profile. Profiles are DB-backed (`GqlCallerProfile`/`GqlCallerProfileMember` by userId), overriding maxCost/maxFirst/maxInventoryKeys/bucketSize/restoreRate and optionally activating a ProductStore row-scope. The live per-caller leaky bucket debits each request's estimated cost (shipped).
+6. **Policy & Metering** — caller → profile. Profiles are DB-backed (`GqlCallerProfile`/`GqlCallerProfileMember` by userId), overriding maxCost/maxFirst/bucketSize/restoreRate and optionally activating a ProductStore row-scope. The live per-caller leaky bucket debits each request's estimated cost (shipped). (The `GqlCallerProfile.maxInventoryKeys` column is vestigial after the inventory-key cap retirement in #35 — no longer read.)
 7. **Observability** — every query logs estimated cost, actual cost, rows, time,
    verdict. Drives threshold tuning and reveals which agent queries get rejected
    and why.

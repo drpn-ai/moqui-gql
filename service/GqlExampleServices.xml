@@ -13,33 +13,10 @@
          resolver-service field kind, the governor's service-field branch) is retained and covered by
          ServiceBackedLoaderTests; it currently has no production schema user. -->
 
-    <service verb="get" noun="InventoryLevels" authenticate="false">
-        <description>ATP/on-hand per product, summed from InventoryItem (service-backed ROOT example).
-            Optional facilityIds filter; returns one InventoryLevel per requested product.</description>
-        <in-parameters>
-            <parameter name="productIds" type="List" required="true"/>
-            <parameter name="facilityIds" type="List"/>
-        </in-parameters>
-        <out-parameters><parameter name="inventoryLevels" type="List"/></out-parameters>
-        <actions>
-            <set field="inventoryLevels" from="[]"/>
-            <set field="singleFac" from="facilityIds?.size() == 1 ? facilityIds[0] : null"/>
-            <iterate list="productIds" entry="pid">
-                <entity-find entity-name="org.apache.ofbiz.product.inventory.InventoryItem" list="iiList">
-                    <econdition field-name="productId" from="pid"/>
-                    <econdition field-name="facilityId" operator="in" from="facilityIds" ignore-if-empty="true"/>
-                    <select-field field-name="availableToPromiseTotal,quantityOnHandTotal"/>
-                </entity-find>
-                <set field="atp" from="0.0"/>
-                <set field="ohq" from="0.0"/>
-                <iterate list="iiList" entry="ii">
-                    <set field="atp" from="atp + (ii.availableToPromiseTotal ?: 0.0)"/>
-                    <set field="ohq" from="ohq + (ii.quantityOnHandTotal ?: 0.0)"/>
-                </iterate>
-                <script>inventoryLevels.add([productId: pid, facilityId: singleFac, availableToPromise: atp, quantityOnHand: ohq])</script>
-            </iterate>
-        </actions>
-    </service>
+    <!-- get#InventoryLevels was RETIRED (#35): inventoryLevels is now a view-backed Relay connection over
+         ProductFacilityInventoryItemView (ProductFacility LEFT-joined to the current InventoryItem), not a
+         service-backed root. It was the last service-backed ROOT; the inventory-key governor cap
+         (maxInventoryKeys/checkInventoryKeyCap) went with it. -->
 
     <!-- Test-only single-in/single-out echo: keeps the service-backed-field CAPABILITY regression-covered
          (ServiceBackedLoaderTests) after the only production service-backed field (itemCount) was retired

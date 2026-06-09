@@ -9,7 +9,6 @@
     <default-property name="gql.serviceFixedCost" value="25"/>
     <default-property name="gql.aggregateFieldCost" value="5"/>      <!-- a selected aggregate field adds a LATERAL sub-select; not a free scalar -->
     <default-property name="gql.serviceBatchKeyLimit" value="1000"/>
-    <default-property name="gql.maxInventoryKeys" value="500"/>
     <default-property name="gql.queryTimeoutSeconds" value="20"/>
     <default-property name="gql.maxRowsPerLevel" value="5000"/>
     <default-property name="gql.wallClockBudgetMs" value="30000"/>

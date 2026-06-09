@@ -119,8 +119,10 @@ type Query {
   checkBopisInventory(facilityId: ID!, productId: ID!, quantity: Int!): InventoryCheck @service(name: "get#BopisInventory") @cost(weight: 25)
   productOnlineAtp(productId: ID!, productStoreId: ID!): AtpResult @service(name: "get#ProductOnlineAtp") @cost(weight: 25)
   facilityInventory(facilityId: ID!, productId: ID!): InventoryLevel @cost(weight: 10)
-  "Bulk ATP/on-hand for many products across facilities (R3). Capped at maxInventoryKeys product*facility pairs."
-  inventoryLevels(productIds: [ID!]!, facilityIds: [ID!]): [InventoryLevel!]! @service(name: "get#InventoryLevels") @cost(weight: 25)
+  "Inventory levels (ATP/QOH) per configured product+facility (view-backed: ProductFacilityInventoryItemView). 0, never null, when unstocked/depleted. query: keys: productId(eq,in) facilityId(eq,in)."
+  inventoryLevels(query: String, sortKey: InventoryLevelSortKey = PRODUCT_ID, reverse: Boolean = false,
+    first: Int, after: String, last: Int, before: String): InventoryLevelConnection!
+    @search(keys: ["productId","facilityId"])
 
   # ---- Inventory count & routing ----
   cycleCount(inventoryCountImportId: ID!): CycleCount
@@ -136,6 +138,7 @@ enum ReturnSortKey { RETURN_DATE RETURN_ID STATUS }
 enum ProductSortKey { PRODUCT_NAME PRODUCT_ID }
 enum FacilitySortKey { FACILITY_NAME FACILITY_ID }
 enum PartySortKey { PARTY_ID LAST_NAME }
+enum InventoryLevelSortKey { PRODUCT_ID FACILITY_ID }
 
 "Computed fulfillment rollup for an order item (decision 12; service-backed)."
 enum FulfillmentStatus { PROCESSING PARTIALLY_COMPLETED COMPLETED CANCELLED RETURNED PARTIALLY_REFUNDED } # NOT YET IMPLEMENTED — design contract
@@ -324,10 +327,13 @@ type ProductStore { productStoreId: ID!  storeName: String  shipmentMethods(firs
 type ProductStoreShipmentMethod { shipmentMethodTypeId: ID!  carrierPartyId: ID  isTrackingRequired: Boolean }
 
 # =============================================================================
-# Inventory / ATP (service-backed result types)
+# Inventory / ATP (checkBopisInventory/productOnlineAtp are service-backed; InventoryLevel is view-backed)
 # =============================================================================
 type InventoryCheck { available: Boolean!  atp: Decimal }
 type AtpResult { atp: Decimal }
+# View-backed (ProductFacilityInventoryItemView): a row per configured product+facility; ATP/QOH are 0, never null.
+type InventoryLevelConnection { edges: [InventoryLevelEdge!]!  pageInfo: PageInfo! }
+type InventoryLevelEdge { cursor: String!  node: InventoryLevel! }
 type InventoryLevel { productId: ID!  facilityId: ID  quantityOnHand: Decimal  availableToPromise: Decimal }
 
 # =============================================================================

@@ -195,19 +195,20 @@
             sort-keys="RETURN_DATE:entryDate STATUS:statusId RETURN_ID:returnId"/>
     </gql-type>
 
-    <!-- Service-backed ROOT (decision 12, R3): no backing entity — fields come from the service result
-         map. Bulk ATP/on-hand for many products (optionally per facility). Cost: opaque/high. -->
-    <gql-type name="InventoryLevel">
-        <field name="productId" type="ID"/>
-        <field name="facilityId" type="ID"/>
-        <field name="availableToPromise" type="Decimal"/>
-        <field name="quantityOnHand" type="Decimal"/>
-        <root-query name="inventoryLevels" service="true"
-            service-name="GqlExampleServices.get#InventoryLevels" service-out="inventoryLevels"
-            returns-list="true">
-            <arg name="productIds" type="IDList" required="true"/>
-            <arg name="facilityIds" type="IDList"/>
-        </root-query>
+    <!-- View-entity-backed ROOT (decision 12): the canonical oms view ProductFacilityInventoryItemView
+         (ProductFacility LEFT-joined to the current InventoryItem via ProductFacility.inventoryItemId).
+         Driven by ProductFacility — one row per configured product+facility; ATP/QOH are COALESCEd to 0
+         (never null) when unstocked/depleted. The view's composite PK (productId, facilityId) is the
+         keyset cursor (same machinery as the parties root). productId/facilityId are both ProductFacility
+         PK columns → index-backed search keys; the decimals are intentionally not in search/sort keys. -->
+    <gql-type name="InventoryLevel" entity-name="co.hotwax.oms.product.inventory.ProductFacilityInventoryItemView">
+        <field name="productId" entity-field="productId" type="ID"/>
+        <field name="facilityId" entity-field="facilityId" type="ID"/>
+        <field name="availableToPromise" entity-field="availableToPromise" type="Decimal"/>
+        <field name="quantityOnHand" entity-field="quantityOnHand" type="Decimal"/>
+        <root-query name="inventoryLevels" list="true"
+            search-keys="productId:eq,in facilityId:eq,in"
+            sort-keys="PRODUCT_ID:productId FACILITY_ID:facilityId"/>
     </gql-type>
 
     <gql-type name="Product" entity-name="org.apache.ofbiz.product.product.Product">

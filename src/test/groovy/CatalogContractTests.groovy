@@ -74,14 +74,18 @@ class CatalogContractTests extends Specification {
         byIdent.errors.isEmpty() && byIdent.data.orderByIdentification.orderId == identOrderId
     }
 
-    def "E — inventoryLevels service-backed root returns InventoryLevel list with Decimal-as-string"() {
+    def "E — inventoryLevels view-backed connection filters by productId(in); ATP/QOH 0-not-null, Decimal-as-string"() {
+        given:
+        org.junit.jupiter.api.Assumptions.assumeTrue(!productIds.isEmpty())
         when:
-        def r = engine.execute('query Q($p:[ID!]!){ inventoryLevels(productIds:$p){ productId availableToPromise quantityOnHand } }',
-                [p: productIds], "Q")
+        def r = engine.execute('query Q($q:String!){ inventoryLevels(first:50, query:$q){ edges{ node{ productId availableToPromise quantityOnHand } } pageInfo{ hasNextPage } } }',
+                [q: "productId:" + productIds.join(",")], "Q")
         then:
         r.errors.isEmpty()
-        r.data.inventoryLevels.size() == productIds.size()
-        r.data.inventoryLevels.every { it.availableToPromise instanceof String }   // Decimal serialized as string
+        r.data.inventoryLevels.edges instanceof List
+        // only requested products; COALESCE contract (0, never null); Decimal serialized as string
+        r.data.inventoryLevels.edges.every { (productIds as Set).contains(it.node.productId) }
+        r.data.inventoryLevels.edges.every { it.node.availableToPromise instanceof String && it.node.quantityOnHand instanceof String }
     }
 
     def "shipments catalog example returns rows after the generator seeds data"() {

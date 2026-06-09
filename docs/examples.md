@@ -298,27 +298,37 @@ Variables: `{ "orderId": "10001" }`
 
 ---
 
-## E. Inventory & ATP (service-backed)
+## E. Inventory & ATP (`inventoryLevels` view-backed; the rest service-backed/design-surface)
+
+### E1 — point ATP/BOPIS roots (service-backed; design surface, not yet built)
 ```graphql
 { checkBopisInventory(facilityId: "STORE_07", productId: "NN-TEE-WHT-L", quantity: 2) { available atp }
   productOnlineAtp(productId: "NN-TEE-WHT-L", productStoreId: "ONLINE") { atp }
-  facilityInventory(facilityId: "WH1", productId: "NN-TEE-WHT-L") { quantityOnHandTotal availableToPromiseTotal minimumStock }
-  # bulk ATP (R3): many SKUs across facilities in one call
-  inventoryLevels(productIds: ["NN-TEE-WHT-L","NN-HOODIE-BLK-M"], facilityIds: ["WH1","STORE_07"]) {
-    productId facilityId availableToPromise } }
+  facilityInventory(facilityId: "WH1", productId: "NN-TEE-WHT-L") { quantityOnHandTotal availableToPromiseTotal minimumStock } }
 ```
 ```json
 { "data": {
   "checkBopisInventory": { "available": true, "atp": "7" },
   "productOnlineAtp": { "atp": "142" },
-  "facilityInventory": { "quantityOnHandTotal": "160", "availableToPromiseTotal": "142", "minimumStock": "18" },
-  "inventoryLevels": [
-    { "productId": "NN-TEE-WHT-L", "facilityId": "WH1", "availableToPromise": "142" },
-    { "productId": "NN-TEE-WHT-L", "facilityId": "STORE_07", "availableToPromise": "7" },
-    { "productId": "NN-HOODIE-BLK-M", "facilityId": "WH1", "availableToPromise": "33" },
-    { "productId": "NN-HOODIE-BLK-M", "facilityId": "STORE_07", "availableToPromise": "0" } ] } }
+  "facilityInventory": { "quantityOnHandTotal": "160", "availableToPromiseTotal": "142", "minimumStock": "18" } } }
 ```
-**maps:** `get#BopisInventory`/`get#ProductOnlineAtp`/`get#InventoryLevels` (service); `ProductFacilityView` (view) · **kind:** `[SERVICE][VIEW]` · **cost:** high (service-backed fixed cost) · **test:** Decimal as strings; `inventoryLevels` capped at `maxInventoryKeys` product×facility pairs (→ `BATCH_LIMIT_EXCEEDED` beyond it).
+**maps:** `get#BopisInventory`/`get#ProductOnlineAtp` (service) · **kind:** `[SERVICE][VIEW]` · **cost:** high (service-backed fixed cost).
+
+### E2 — `inventoryLevels`: ATP/QOH per configured product+facility (view-backed connection, R3)
+**Need:** "current ATP and on-hand for these SKUs across facilities." Driven by `ProductFacility`: one row per **configured** product+facility; ATP/QOH are **0, never null** when unstocked/depleted; **no row** when the product is not configured at the facility.
+```graphql
+{ inventoryLevels(query: "productId:NN-TEE-WHT-L,NN-HOODIE-BLK-M", first: 50) {
+    edges { node { productId facilityId availableToPromise quantityOnHand } } pageInfo { hasNextPage endCursor } } }
+```
+```json
+{ "data": { "inventoryLevels": { "edges": [
+  { "node": { "productId": "NN-HOODIE-BLK-M", "facilityId": "STORE_07", "availableToPromise": "0", "quantityOnHand": "0" } },
+  { "node": { "productId": "NN-HOODIE-BLK-M", "facilityId": "WH1", "availableToPromise": "33", "quantityOnHand": "40" } },
+  { "node": { "productId": "NN-TEE-WHT-L", "facilityId": "STORE_07", "availableToPromise": "7", "quantityOnHand": "9" } },
+  { "node": { "productId": "NN-TEE-WHT-L", "facilityId": "WH1", "availableToPromise": "142", "quantityOnHand": "160" } } ],
+  "pageInfo": { "hasNextPage": false, "endCursor": "aW52Ok5OLVRFRS1XSFQtTDpXSDE=" } } } }
+```
+**maps:** `ProductFacilityInventoryItemView` (view — `ProductFacility` LEFT-joined to the current `InventoryItem` via `ProductFacility.inventoryItemId`; ATP/QOH COALESCEd to 0) · **kind:** `[VIEW]` · **cost:** moderate (a normal connection — composite-PK `(productId, facilityId)` keyset; `productId`/`facilityId` index-backed search keys) · **test:** Decimal as strings; ATP/QOH are 0-not-null for configured-but-unstocked; filter by `productId`/`facilityId` (eq/in); composite-PK keyset paging does not overlap.
 
 ---
 
@@ -501,7 +511,7 @@ descriptions precisely so a standard introspection makes it visible.
 | Picklist/Pick | B4 | B3 | B4 | — | B3,B4 | — | B3,B4 |
 | Returns | — | C | C | — | — | C | C |
 | Transfer/PO | D2 | D1 | D1,D2 | — | D1 | — | D1 |
-| Inventory/ATP | — | — | — | E | E | — | — |
+| Inventory/ATP | — | E2 | — | E1 | E2 | — | E2 |
 | Catalog | F | F | F | — | F | F | F |
 | Facility/Store | G | — | G | — | G | J4 | — |
 | CycleCount | H | — | H | — | — | — | H |

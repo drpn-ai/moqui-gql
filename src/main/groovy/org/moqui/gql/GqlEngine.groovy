@@ -58,7 +58,6 @@ class GqlEngine {
                 maxCost              : (sysOr("gql.maxCost", "1000")) as int,
                 maxFirst             : maxFirst,
                 serviceBatchKeyLimit : serviceBatchKeyLimit,
-                maxInventoryKeys     : (sysOr("gql.maxInventoryKeys", "500")) as int,
                 unindexedFilterPenalty: (sysOr("gql.unindexedFilterPenalty", "50")) as int,
                 serviceFixedCost     : (sysOr("gql.serviceFixedCost", "25")) as int,
                 aggregateFieldCost   : (sysOr("gql.aggregateFieldCost", "5")) as int,
@@ -90,7 +89,7 @@ class GqlEngine {
         String scopeStore = null
         if (profile != null) {
             effectiveCfg = new LinkedHashMap<String, Integer>(govCfg)
-            for (String k in ["maxCost", "maxFirst", "maxInventoryKeys", "bucketSize", "restoreRate"]) {
+            for (String k in ["maxCost", "maxFirst", "bucketSize", "restoreRate"]) {
                 def v = profile.get(k); if (v != null) effectiveCfg.put(k, ((Number) v).intValue())
             }
             scopeStore = profile.get("scopeProductStoreId")

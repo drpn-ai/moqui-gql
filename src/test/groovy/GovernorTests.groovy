@@ -10,20 +10,15 @@ import org.moqui.gql.GqlEngine
 class GovernorTests extends Specification {
     @Shared ExecutionContext ec
     @Shared String sampleOrderId
-    @Shared List productIds
 
     def setupSpec() {
         ec = Moqui.getExecutionContext(); ec.artifactExecution.disableAuthz()
         sampleOrderId = ec.entity.find("org.apache.ofbiz.order.order.OrderHeader")
                 .selectField("orderId").maxRows(1).fetchSize(1).list().get(0).orderId
-        def rows = ec.entity.find("org.apache.ofbiz.order.order.OrderItem")
-                .selectField("productId").distinct(true).maxRows(10).fetchSize(10).list()
-        productIds = []
-        for (r in rows) { if (r.productId && !productIds.contains(r.productId)) productIds.add(r.productId); if (productIds.size() >= 2) break }
     }
     def cleanupSpec() { if (ec != null) { ec.artifactExecution.enableAuthz(); ec.destroy() } }
     // never leak threshold overrides into other suite classes
-    def cleanup() { ["gql.maxDepth", "gql.maxCost", "gql.serviceBatchKeyLimit", "gql.maxInventoryKeys", "gql.wallClockBudgetMs"].each { System.clearProperty(it) } }
+    def cleanup() { ["gql.maxDepth", "gql.maxCost", "gql.serviceBatchKeyLimit", "gql.wallClockBudgetMs"].each { System.clearProperty(it) } }
 
     private static boolean hasCode(Map r, String c) { return r.errors.any { it.extensions?.code == c } }
 
@@ -83,10 +78,13 @@ class GovernorTests extends Specification {
         r.data?.order == null
     }
 
-    // N6 (service-backed field under a wide list trips BATCH_LIMIT_EXCEEDED) was REMOVED with the
-    // retirement of itemCount (#37): no service-backed field remains in the schema to exercise it. The
-    // service-backed governor branch is still live code; the inventoryLevels case below covers the
-    // BATCH_LIMIT_EXCEEDED path for the surviving service-backed root.
+    // BATCH_LIMIT_EXCEEDED is no longer exercised by any governor test. Two code paths emitted it:
+    //   (a) the inventory-key cap on the inventoryLevels SERVICE root (maxInventoryKeys) — REMOVED with
+    //       that root in #35 (inventoryLevels is now a view-backed connection, governed like any other);
+    //   (b) the general service-backed-FIELD cap (fanout > serviceBatchKeyLimit) — still live code, but
+    //       unreachable via the built schema since the last service-backed field (itemCount) was retired
+    //       in #37 (the old N6 case was dropped then). The capability is unit-covered by
+    //       ServiceBackedLoaderTests; the governor's service-field branch has no schema field to drive it.
 
     def "selecting an aggregate field (orderItemCount) adds aggregateFieldCost to the query cost"() {
         when:
@@ -105,16 +103,5 @@ class GovernorTests extends Specification {
         def r = new GqlEngine(ec).execute('query { orders(first:2){ edges{ node{ orderId } } } }', [:], null)
         then:
         hasCode(r, "DEADLINE_EXCEEDED")
-    }
-
-    def "inventoryLevels over maxInventoryKeys is rejected with BATCH_LIMIT_EXCEEDED"() {
-        given:
-        System.setProperty("gql.maxInventoryKeys", "1")   // 2 products > 1
-        when:
-        def r = new GqlEngine(ec).execute(
-                'query Q($p:[ID!]!){ inventoryLevels(productIds:$p){ productId } }', [p: productIds], "Q")
-        then:
-        hasCode(r, "BATCH_LIMIT_EXCEEDED")
-        r.data?.inventoryLevels == null
     }
 }

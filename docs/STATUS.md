@@ -50,7 +50,7 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 |---|---|
 | Query language | Shopify-style `query:` search (declared keys + comparators), `sortKey`+`reverse`, Relay connections — over our OMS field names |
 | Pagination | Keyset cursors, forward + backward, single- and composite-PK; no OFFSET (deep pages stay flat-cost) |
-| Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`), **aggregate fields** (`Order.orderItemCount` — lazy LATERAL `COUNT(DISTINCT externalId)`, added to the query only when selected), service-backed roots (`inventoryLevels`), view-backed has-one leaf edges (`Order.billToCustomer`). The service-backed **field** kind is retained (engine + governor branch) but currently has no schema user after `Order.itemCount`→`orderItemCount` (#37); its capability is covered by `ServiceBackedLoaderTests` |
+| Resolvers (decision 12) | Entity-backed, view-entity-backed (`parties`, `inventoryLevels`), **aggregate fields** (`Order.orderItemCount` — lazy LATERAL `COUNT(DISTINCT externalId)`, added to the query only when selected), view-backed has-one leaf edges (`Order.billToCustomer`). The service-backed **field** and **root** kinds are retained (engine + governor branch) but currently have **no schema user**: the last service-backed field went with `Order.itemCount`→`orderItemCount` (#37), and the last service-backed root went with `inventoryLevels`→view-backed connection (#35). The service-backed-field capability is covered by `ServiceBackedLoaderTests` |
 | Batching | DataLoader — one query per level (no N+1) for connections, plain lists, and service calls. Nested has-many edges batch over **composite (multi-field) parent keys** (#38): single fk field → `WHERE fk IN(:keys)`, composite key → `OR`-of-`AND`s grouped by key tuple. `ShipGroup.orderItems` batches per `(orderId, shipGroupSeqId)`; `order.shipGroups` excludes empty groups via one extra batched `DISTINCT` query |
 | External-id | `order(externalId:)`, `order.identifications`, `orderByIdentification`, `facility(externalId:)` |
 | Governor | Pre-execution gate (nothing hits the DB on reject) with stable `extensions.code`; runtime `queryTimeout` + per-level row caps + wall-clock deadline |
@@ -65,7 +65,8 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 
 ### Schema surface
 Order, OrderItem, OrderStatus, OrderAdjustment, OrderPaymentPreference, ShipGroup, OrderIdentification,
-BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, InventoryLevel.
+BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, InventoryLevel (view —
+`ProductFacilityInventoryItemView`; the `inventoryLevels` connection root).
 Plus the #43 ShipGroup detail types: `FacilityOriginAddress` (view), `ShipmentMethodType`, `OrderFacilityChange`.
 Nested edges include `ShipGroup.orderItems` (#38) — items of a ship group, grouped per `(orderId, shipGroupSeqId)` —
 and the #43 `ShipGroup` detail edges:
@@ -75,16 +76,16 @@ and the #43 `ShipGroup` detail edges:
 
 ---
 
-## Tests — 90 across 31 classes (89 pass, 1 skipped; vs `hcsd_notnaked`)
+## Tests — 95 across 31 classes (92 pass, 3 skipped; vs `hcsd_notnaked`)
 
 | Group | Classes (count) |
 |---|---|
 | Engine / execution | `GqlEngineTests` (8) — by-pk, fwd/back pagination matched to DB keyset order, `query:` filtering, nested batch grouping |
-| Governor / adversarial | `GovernorTests` (9) — N1–N6, Q3b, inventory cap, wall-clock — each rejected pre-execution with the exact code + `data:null` |
+| Governor / adversarial | `GovernorTests` (8) — N1–N5, Q3b, aggregate-field cost, wall-clock — each rejected (or charged) pre-execution with the exact code + `data:null`. (`BATCH_LIMIT_EXCEEDED` has no governor-test driver after the inventory-cap retirement (#35); see the test's note.) |
 | Connection walks | `ConnectionWalkTests` (4) — page sizes 1/3/7 same ordered set, no overlap/skip; composite-PK never repeats |
 | Composite-key batching (#38) | `ShipGroupItemsTests` (4) — `order → shipGroups → orderItems` batched per `(orderId, shipGroupSeqId)`, items match DB ground truth (no cross-order/cross-group leakage); `order.shipGroups` excludes empty groups (data-exercised) |
 | ShipGroup detail edges (#43) | `ShipGroupDetailEdgesTests` (4; 1 skipped) — `shipFromAddress` (+lat/long, single-key has-one), `shippingMethod` (single-key has-one, data-exercised: 473 ship groups), `facilityChangeHistory` (composite-key has-many, wiring-verified — no change-bearing ship group has items in `hcsd_notnaked`, so all are dropped by exclude-empty; the ground-truth test skips until such data exists) |
-| Resolver kinds | `PartyConnectionTests` (4), `ServiceBackedTests` (2), `InventoryLevelsTests` (1), `OrderDetailEdgesTests` (1), `ProductFacilityTests` (2) |
+| Resolver kinds | `PartyConnectionTests` (4), `ServiceBackedLoaderTests` (2), `InventoryLevelsTests` (5) — view-backed connection: 0-not-null totals, productId/facilityId filters (data-skipped if `ProductFacility` empty), composite-PK keyset, `FIRST_REQUIRED` — `OrderDetailEdgesTests` (1), `ProductFacilityTests` (2) |
 | External-id | `ExternalIdTests` (4) |
 | Endpoint + observability | `EndpointTests` (4) — service, cost shape, ALLOWED + REJECTED logging |
 | Phase 2 | `ThrottleGateTests` (1), `ThrottleE2ETests` (1), `CallerProfileTests` (2) |

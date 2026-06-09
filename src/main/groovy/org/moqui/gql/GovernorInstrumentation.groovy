@@ -10,7 +10,6 @@ import graphql.execution.instrumentation.InstrumentationState
 import graphql.execution.instrumentation.SimplePerformantInstrumentation
 import graphql.execution.instrumentation.parameters.InstrumentationExecuteOperationParameters
 import graphql.execution.instrumentation.parameters.InstrumentationFieldFetchParameters
-import graphql.language.ArrayValue
 import graphql.language.Field
 import graphql.language.FragmentDefinition
 import graphql.language.FragmentSpread
@@ -48,7 +47,7 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     private final SchemaArtifact art
     private final IndexClassifier indexClassifier
     private final SearchQueryParser searchParser = new SearchQueryParser()
-    final int maxDepth, maxCost, maxFirst, serviceBatchKeyLimit, maxInventoryKeys, unindexedFilterPenalty, serviceFixedCost
+    final int maxDepth, maxCost, maxFirst, serviceBatchKeyLimit, unindexedFilterPenalty, serviceFixedCost
     final int aggregateFieldCost
     private final long wallClockBudgetMs
     private final long deadlineNanos
@@ -63,7 +62,7 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
         this.ec = ec; this.built = built; this.art = built.artifact
         this.indexClassifier = new IndexClassifier(ec)
         this.maxDepth = cfg.maxDepth; this.maxCost = cfg.maxCost; this.maxFirst = cfg.maxFirst
-        this.serviceBatchKeyLimit = cfg.serviceBatchKeyLimit; this.maxInventoryKeys = cfg.maxInventoryKeys
+        this.serviceBatchKeyLimit = cfg.serviceBatchKeyLimit
         this.unindexedFilterPenalty = cfg.unindexedFilterPenalty; this.serviceFixedCost = cfg.serviceFixedCost
         this.aggregateFieldCost = (cfg.aggregateFieldCost != null ? cfg.aggregateFieldCost : 5)
         this.wallClockBudgetMs = (cfg.wallClockBudgetMs != null ? cfg.wallClockBudgetMs : 30000)
@@ -155,10 +154,11 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
             GraphQLType named = unwrapAll(fd.getType())
             String typeName = (named instanceof GraphQLObjectType) ? ((GraphQLObjectType) named).getName() : null
 
-            // ---- root inventory-style service root: cap product*facility pairs ----
+            // ---- service-backed root (decision 12 at root level): fixed high cost, opaque to analysis.
+            //   No production schema user after #35 retired inventoryLevels; the branch is kept for any
+            //   future service root. (The inventory-key pair cap was removed with that root.) ----
             GqlRootQuery rootQ = atRoot ? art.rootQueries.get(field.getName()) : null
             if (rootQ != null && rootQ.serviceBacked) {
-                checkInventoryKeyCap(field, rootQ)
                 long child = (named instanceof GraphQLObjectType) ? cost(nodeSelOrSelf(field), (GraphQLObjectType) named, depth + 1, fanout) : 0L
                 bumpDepth(depth + 1)
                 return sat((long) serviceFixedCost + child)
@@ -243,16 +243,6 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
             return penalty
         }
 
-        private void checkInventoryKeyCap(Field field, GqlRootQuery rootQ) {
-            int prod = listArgSize(field, "productIds")
-            int fac = listArgSize(field, "facilityIds")
-            if (prod < 0) return
-            long pairs = (long) prod * (fac > 0 ? fac : 1)
-            if (pairs > maxInventoryKeys) errors.add(err(
-                    "inventoryLevels would resolve " + pairs + " product*facility pairs; exceeds limit " + maxInventoryKeys,
-                    "BATCH_LIMIT_EXCEEDED", [field: field.getName(), keys: pairs, limit: maxInventoryKeys]))
-        }
-
         private void checkTooLarge(Field field, Integer first, Integer last) {
             if ((first != null && first > maxFirst) || (last != null && last > maxFirst)) {
                 int bad = (first != null && first > maxFirst) ? first : last
@@ -326,14 +316,6 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
         if (v instanceof StringValue) return ((StringValue) v).getValue()
         if (v instanceof VariableReference) { def cv = vars0(((VariableReference) v).getName()); return cv != null ? cv.toString() : null }
         return null
-    }
-    private int listArgSize(Field field, String name) {
-        def a = field.getArguments().find { it.getName() == name }
-        if (a == null) return -1
-        def v = a.getValue()
-        if (v instanceof ArrayValue) return ((ArrayValue) v).getValues().size()
-        if (v instanceof VariableReference) { def cv = vars0(((VariableReference) v).getName()); return (cv instanceof Collection) ? ((Collection) cv).size() : -1 }
-        return -1
     }
 
     // current-walk variables, stashed for the arg helpers (single-threaded per request)
