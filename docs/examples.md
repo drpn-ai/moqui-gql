@@ -141,6 +141,36 @@ Variables: `{ "orderId": "10001" }`
 ```
 **maps:** `ShipGroup.orderItems` is a composite-key nested edge — batched per `(orderId, shipGroupSeqId)` via the `OrderItemShipGroup.items` relationship, navigating `OrderItem.shipGroupSeqId` (**not** `OrderItemShipGroupAssoc`). One query per level (no N+1), grouped by the key tuple. · **note:** `order.orderItems` (flat) and the union of `shipGroups[].orderItems` (grouped) are the **same rows** — every OrderItem has a non-null `shipGroupSeqId` (total join), so the grouped view re-partitions the flat list without adding or dropping rows. `order.shipGroups` returns **only** ship groups with ≥ 1 item (empties dropped). · **kind:** `[DB]` · **test:** `ShipGroupItemsTests` — items under each ship group equal the DB rows for that exact `(orderId, shipGroupSeqId)` (no cross-order/cross-group leakage); empty ship groups excluded.
 
+### A1c — Ship group detail edges (#43): origin address +geo, shipping method, facility-change history
+**Need:** for each ship group, where it ships FROM (incl. lat/long), the descriptive shipping method, and its facility-routing audit trail.
+```graphql
+query ShipGroupDetail($orderId: ID!) {
+  order(orderId: $orderId) {
+    orderId
+    shipGroups(first: 10) {
+      edges { node {
+        shipGroupSeqId facilityId carrierPartyId
+        shipFromAddress { address1 city postalCode stateProvinceGeoId latitude longitude }
+        shippingMethod { shipmentMethodTypeId description }
+        facilityChangeHistory(first: 50) {
+          edges { node { fromFacilityId facilityId changeDatetime changeReasonEnumId comments } } }
+      } }
+    } } }
+```
+Variables: `{ "orderId": "10001" }`
+```json
+{ "data": { "order": {
+  "orderId": "10001",
+  "shipGroups": { "edges": [
+    { "node": {
+      "shipGroupSeqId": "00001", "facilityId": "DALLAS_DC", "carrierPartyId": "USPS",
+      "shipFromAddress": { "address1": "100 Commerce St", "city": "Dallas", "postalCode": "75201", "stateProvinceGeoId": "USA_TX", "latitude": "32.7767", "longitude": "-96.7970" },
+      "shippingMethod": { "shipmentMethodTypeId": "STANDARD", "description": "Standard Ground" },
+      "facilityChangeHistory": { "edges": [
+        { "node": { "fromFacilityId": "ATLANTA_DC", "facilityId": "DALLAS_DC", "changeDatetime": "2026-06-04T08:28:08Z", "changeReasonEnumId": "ROUTING_REBALANCE", "comments": "rebalanced for capacity" } } ] } } } ] } } } }
+```
+**maps:** `shipFromAddress` is a single-key has-one (the `billToCustomer` pattern) keyed by `facilityId` — view-backed `moqui.gql.FacilityOriginAddress` (purpose `SHIP_ORIG_LOCATION`, `latitude`/`longitude` from the joined `GeoPoint`); `shippingMethod` is a single-key has-one to `ShipmentMethodType` (`shipmentMethodTypeId` + `description`) — carrier identity stays on the `carrierPartyId` scalar; `facilityChangeHistory` is a composite-key has-many batched per `(orderId, shipGroupSeqId)` via the gql-owned `OrderItemShipGroup.facilityChanges` relationship → rides #38's composite `NestedConnectionLoader`, one query per level (no N+1), ordered by the child PK `orderFacilityChangeId` (assigned in change-time order, so oldest → newest). · **note:** `facilityChangeHistory` is only reachable on ship groups that survive `order.shipGroups` exclude-empty (≥ 1 item). · **kind:** `[DB][VIEW]` · **test:** `ShipGroupDetailEdgesTests` — `shipFromAddress.facilityId` matches the ship group's `facilityId`; `shippingMethod.shipmentMethodTypeId` round-trips; every history row belongs to its ship group (no cross-group leakage), in keyset order.
+
 ### A2 — Open-orders queue, first page
 ```graphql
 { orders(query: "statusId:ORDER_APPROVED", sortKey: ORDER_DATE, first: 2) {

@@ -4,9 +4,9 @@ A curated, **read-only GraphQL layer** over the HotWax/Maarg OMS data model, mod
 Admin API (query language + `extensions.cost`), fronted by a **cost governor** so internal apps, AI
 agents, and partners can fetch nested OMS data without harming the system.
 
-**Status:** Phases 1, 1.5, 2, and 3 complete and merged to `main`. **82 tests pass** across 28 classes,
-all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The only
-outstanding item is a framework dependency (see below).
+**Status:** Phases 1, 1.5, 2, and 3 complete and merged to `main`. **89 tests pass (1 skipped)** across
+31 classes, all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The
+only outstanding item is a framework dependency (see below).
 
 Last updated: 2026-06-09.
 
@@ -66,11 +66,16 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 ### Schema surface
 Order, OrderItem, OrderStatus, OrderAdjustment, OrderPaymentPreference, ShipGroup, OrderIdentification,
 BillToCustomer (view), Party (view), Shipment, Return, Product, Facility, InventoryLevel.
-Nested edges include `ShipGroup.orderItems` (#38) — items of a ship group, grouped per `(orderId, shipGroupSeqId)`.
+Plus the #43 ShipGroup detail types: `FacilityOriginAddress` (view), `ShipmentMethodType`, `OrderFacilityChange`.
+Nested edges include `ShipGroup.orderItems` (#38) — items of a ship group, grouped per `(orderId, shipGroupSeqId)` —
+and the #43 `ShipGroup` detail edges:
+- `ShipGroup.shipFromAddress` — origin (facility) postal address incl. `latitude`/`longitude`. **Single-key has-one** (the `billToCustomer` path) keyed by `facilityId`, backed by the gql-owned view `moqui.gql.FacilityOriginAddress` (purpose `SHIP_ORIG_LOCATION`, lat/long from the joined `GeoPoint`). Works today — no engine change.
+- `ShipGroup.shippingMethod` — descriptive method (`ShipmentMethodType` `shipmentMethodTypeId` + `description`). **Single-key has-one** keyed by `shipmentMethodTypeId`; carrier identity stays on the `carrierPartyId` scalar (the composite carrier edge was closed not-planned). Works today.
+- `ShipGroup.facilityChangeHistory` — facility-routing audit trail. **Composite-key has-many** batched per `(orderId, shipGroupSeqId)` via the gql-owned `OrderItemShipGroup.facilityChanges` `extend-entity` relationship; rode #38's composite `NestedConnectionLoader` (declarative-only — relationship + edge + type, no engine change). Ordered by the child PK `orderFacilityChangeId` (assigned in change-time order). Only reachable on ship groups that survive `order.shipGroups` exclude-empty.
 
 ---
 
-## Tests — 75 across 27 classes (vs `hcsd_notnaked`)
+## Tests — 90 across 31 classes (89 pass, 1 skipped; vs `hcsd_notnaked`)
 
 | Group | Classes (count) |
 |---|---|
@@ -78,6 +83,7 @@ Nested edges include `ShipGroup.orderItems` (#38) — items of a ship group, gro
 | Governor / adversarial | `GovernorTests` (9) — N1–N6, Q3b, inventory cap, wall-clock — each rejected pre-execution with the exact code + `data:null` |
 | Connection walks | `ConnectionWalkTests` (4) — page sizes 1/3/7 same ordered set, no overlap/skip; composite-PK never repeats |
 | Composite-key batching (#38) | `ShipGroupItemsTests` (4) — `order → shipGroups → orderItems` batched per `(orderId, shipGroupSeqId)`, items match DB ground truth (no cross-order/cross-group leakage); `order.shipGroups` excludes empty groups (data-exercised) |
+| ShipGroup detail edges (#43) | `ShipGroupDetailEdgesTests` (4; 1 skipped) — `shipFromAddress` (+lat/long, single-key has-one), `shippingMethod` (single-key has-one, data-exercised: 473 ship groups), `facilityChangeHistory` (composite-key has-many, wiring-verified — no change-bearing ship group has items in `hcsd_notnaked`, so all are dropped by exclude-empty; the ground-truth test skips until such data exists) |
 | Resolver kinds | `PartyConnectionTests` (4), `ServiceBackedTests` (2), `InventoryLevelsTests` (1), `OrderDetailEdgesTests` (1), `ProductFacilityTests` (2) |
 | External-id | `ExternalIdTests` (4) |
 | Endpoint + observability | `EndpointTests` (4) — service, cost shape, ALLOWED + REJECTED logging |

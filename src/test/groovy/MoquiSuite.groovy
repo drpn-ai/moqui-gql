@@ -12,7 +12,7 @@ import org.moqui.Moqui
         CatalogContractTests.class, OrderDetailEdgesTests.class, ProductFacilityTests.class,
         ThrottleGateTests.class, ThrottleE2ETests.class, CallerProfileTests.class, PreparsedCacheTests.class,
         BillToCustomerTests.class, SchemaContractTests.class, OrderItemCountTests.class,
-        ShipGroupItemsTests.class ])
+        ShipGroupItemsTests.class, ShipGroupDetailEdgesTests.class ])
 class MoquiSuite {
     @AfterAll
     static void destroyMoqui() { Moqui.destroyActiveExecutionContextFactory() }

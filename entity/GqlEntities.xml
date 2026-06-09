@@ -57,4 +57,66 @@
             <econdition entity-alias="ROL" field-name="roleTypeId" value="BILL_TO_CUSTOMER"/>
         </entity-condition>
     </view-entity>
+
+    <!-- #43: a ship group's origin (facility) postal address, as leaf columns incl. lat/long. Backs the
+         ShipGroup.shipFromAddress has-one edge (keyed by facilityId). Distinct from ofbiz-oms-udm's
+         FacilityContactDetailByPurpose: that view excludes latitude/longitude and applies no purpose
+         filter; this one pins the SHIP_ORIG_LOCATION purpose and surfaces GeoPoint.latitude/longitude.
+         join-optional on the address chain so a facility with no postal address still yields a row keyed
+         by facilityId (the edge then resolves to null fields, never an error). Both FCM and FCMP carry
+         effective-date PK fields (fromDate/thruDate), so the entity-condition date-filters BOTH aliases:
+         FCMP (the purpose) and FCM (the facility<->contactMech assignment). Without the FCM filter, every
+         effective generation of a (facilityId, contactMechId) assignment fans out and the view can return
+         >1 row per facility — the has-one would then pick one arbitrarily. With both filtered the view is
+         deterministically <= 1 row per facilityId, PROVIDED a facility has a single effective
+         SHIP_ORIG_LOCATION origin contact mech. If a facility has multiple effective origin addresses, the
+         has-one returns an arbitrary one — the same property the moqui.gql.OrderBillToCustomer /
+         billToCustomer has-one carries. -->
+    <view-entity entity-name="FacilityOriginAddress" package="moqui.gql">
+        <member-entity entity-alias="FA" entity-name="org.apache.ofbiz.product.facility.Facility"/>
+        <member-entity entity-alias="FCM" entity-name="org.apache.ofbiz.product.facility.FacilityContactMech" join-from-alias="FA">
+            <key-map field-name="facilityId"/>
+        </member-entity>
+        <member-entity entity-alias="FCMP" entity-name="org.apache.ofbiz.product.facility.FacilityContactMechPurpose" join-from-alias="FCM">
+            <key-map field-name="facilityId"/>
+            <key-map field-name="contactMechId"/>
+        </member-entity>
+        <member-entity entity-alias="PA" entity-name="org.apache.ofbiz.party.contact.PostalAddress" join-from-alias="FCM" join-optional="true">
+            <key-map field-name="contactMechId"/>
+        </member-entity>
+        <member-entity entity-alias="GP" entity-name="moqui.basic.GeoPoint" join-from-alias="PA" join-optional="true">
+            <key-map field-name="geoPointId"/>
+        </member-entity>
+        <alias name="facilityId" entity-alias="FA"/>
+        <alias name="contactMechId" entity-alias="FCM"/>
+        <alias name="contactMechPurposeTypeId" entity-alias="FCMP"/>
+        <alias name="toName" entity-alias="PA"/>
+        <alias name="attnName" entity-alias="PA"/>
+        <alias name="address1" entity-alias="PA"/>
+        <alias name="address2" entity-alias="PA"/>
+        <alias name="city" entity-alias="PA"/>
+        <alias name="postalCode" entity-alias="PA"/>
+        <alias name="stateProvinceGeoId" entity-alias="PA"/>
+        <alias name="countryGeoId" entity-alias="PA"/>
+        <alias name="latitude" entity-alias="GP"/>
+        <alias name="longitude" entity-alias="GP"/>
+        <entity-condition>
+            <econdition entity-alias="FCMP" field-name="contactMechPurposeTypeId" value="SHIP_ORIG_LOCATION"/>
+            <date-filter entity-alias="FCMP"/>
+            <date-filter entity-alias="FCM"/>
+        </entity-condition>
+    </view-entity>
+
+    <!-- #43: inverse of OrderFacilityChange's one-relationship to OrderItemShipGroup (fk ORDER_OFC_OISG).
+         Backs the ShipGroup.facilityChangeHistory has-many edge, keyed by (orderId, shipGroupSeqId).
+         Declared here (gql-owned) rather than in runtime/component/oms per the no-touch-components rule;
+         mirrors the existing OrderItemShipGroup.items relationship. The nested loader orders children by
+         the child PK (orderFacilityChangeId), which is assigned in change-time order, so the audit trail
+         reads oldest -> newest. -->
+    <extend-entity entity-name="OrderItemShipGroup" package="org.apache.ofbiz.order.order">
+        <relationship type="many" related="co.hotwax.facility.OrderFacilityChange" short-alias="facilityChanges">
+            <key-map field-name="orderId"/>
+            <key-map field-name="shipGroupSeqId"/>
+        </relationship>
+    </extend-entity>
 </entities>

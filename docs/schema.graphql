@@ -211,6 +211,29 @@ type ShipGroup {
   facilityId: ID  contactMechId: ID  facility: Facility  picklistId: ID  picker: Person
   "Items of this ship group. Composite-key nested edge (#38): batched per (orderId, shipGroupSeqId) via the OrderItemShipGroup.items relationship, navigating OrderItem.shipGroupSeqId — NOT OrderItemShipGroupAssoc. One query per level (no N+1)."
   orderItems(first: Int, after: String, last: Int, before: String): OrderItemConnection!
+  "Ship group origin (facility) postal address incl. latitude/longitude (#43). View-backed, purpose-filtered to SHIP_ORIG_LOCATION; single-key has-one keyed by facilityId (batched, no N+1)."
+  shipFromAddress: FacilityOriginAddress
+  "The ship group's descriptive shipping method (#43): ShipmentMethodType id + description. Single-key has-one on shipmentMethodTypeId. Carrier identity stays on the carrierPartyId scalar."
+  shippingMethod: ShipmentMethodType
+  "Facility-change audit trail for this ship group (#43). Composite-key has-many batched per (orderId, shipGroupSeqId) via the OrderItemShipGroup.facilityChanges relationship — one query per level (no N+1). Ordered by the child PK (orderFacilityChangeId), which is assigned in change-time order (oldest -> newest)."
+  facilityChangeHistory(first: Int, after: String, last: Int, before: String): OrderFacilityChangeConnection!
+}
+
+"Leaf columns of a ship group's origin (facility) postal address (#43), view-backed (purpose SHIP_ORIG_LOCATION). latitude/longitude come from the joined GeoPoint."
+type FacilityOriginAddress {
+  facilityId: ID  address1: String  address2: String  city: String  postalCode: String
+  stateProvinceGeoId: ID  countryGeoId: ID  latitude: Decimal  longitude: Decimal
+}
+
+"The resolved descriptive shipping method for a ship group (#43): id + label."
+type ShipmentMethodType { shipmentMethodTypeId: ID  description: String }
+
+type OrderFacilityChangeConnection { edges: [OrderFacilityChangeEdge!]!  pageInfo: PageInfo! }
+type OrderFacilityChangeEdge { cursor: String!  node: OrderFacilityChange! }
+"A single facility-change record for a ship group (#43): audit trail row."
+type OrderFacilityChange {
+  orderFacilityChangeId: ID!  shipGroupSeqId: ID  fromFacilityId: ID  facilityId: ID
+  changeDatetime: DateTime  changeReasonEnumId: ID  comments: String
 }
 
 type ReadyToPickOrderConnection { edges: [ReadyToPickOrderEdge!]!  pageInfo: PageInfo! }

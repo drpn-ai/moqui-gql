@@ -60,6 +60,37 @@
         <field name="lastName"/>
     </gql-type>
 
+    <!-- #43: leaf columns of a ship group's origin (facility) address incl. lat/long, view-backed
+         (moqui.gql.FacilityOriginAddress, purpose SHIP_ORIG_LOCATION). -->
+    <gql-type name="FacilityOriginAddress" entity-name="moqui.gql.FacilityOriginAddress">
+        <field name="facilityId" type="ID"/>
+        <field name="address1"/>
+        <field name="address2"/>
+        <field name="city"/>
+        <field name="postalCode"/>
+        <field name="stateProvinceGeoId"/>
+        <field name="countryGeoId"/>
+        <field name="latitude" type="Decimal"/>
+        <field name="longitude" type="Decimal"/>
+    </gql-type>
+
+    <!-- #43: the resolved descriptive shipping method for a ship group (id + label). -->
+    <gql-type name="ShipmentMethodType" entity-name="org.apache.ofbiz.shipment.shipment.ShipmentMethodType">
+        <field name="shipmentMethodTypeId" type="ID"/>
+        <field name="description"/>
+    </gql-type>
+
+    <!-- #43: a single facility-change record for a ship group (audit trail row). -->
+    <gql-type name="OrderFacilityChange" entity-name="co.hotwax.facility.OrderFacilityChange">
+        <field name="orderFacilityChangeId" type="ID"/>
+        <field name="shipGroupSeqId"/>
+        <field name="fromFacilityId"/>
+        <field name="facilityId"/>
+        <field name="changeDatetime" type="DateTime"/>
+        <field name="changeReasonEnumId"/>
+        <field name="comments"/>
+    </gql-type>
+
     <gql-type name="OrderStatus" entity-name="org.apache.ofbiz.order.order.OrderStatus">
         <field name="statusId" type="ID"/>
         <field name="statusDatetime" type="DateTime"/>
@@ -89,6 +120,22 @@
         <!-- composite-key nested edge (#38): items of this ship group via the OrderItemShipGroup.items
              relationship (orderId + shipGroupSeqId), navigating OrderItem.shipGroupSeqId (NOT OrderItemShipGroupAssoc). -->
         <edge name="orderItems" entity-relationship="items" target-type="OrderItem" list="true"/>
+        <!-- #43: ship group origin (facility) postal address incl. lat/long. Single-key has-one
+             (the billToCustomer pattern): batched WHERE facilityId IN(:keys), no N+1. Works today. -->
+        <edge name="shipFromAddress" target-type="FacilityOriginAddress" entity-name="moqui.gql.FacilityOriginAddress"
+              fk="facilityId" single="true"/>
+        <!-- #43: the ship group's shipping method (ShipmentMethodType id + description).
+             Single-key has-one on shipmentMethodTypeId — the billToCustomer pattern, works today.
+             Carrier identity stays on the carrierPartyId scalar (the composite carrier edge was dropped). -->
+        <edge name="shippingMethod" target-type="ShipmentMethodType"
+              entity-name="org.apache.ofbiz.shipment.shipment.ShipmentMethodType"
+              fk="shipmentMethodTypeId" single="true"/>
+        <!-- #43: facility-change audit trail for this ship group. Composite-key has-many (orderId,
+             shipGroupSeqId) via the OrderItemShipGroup.facilityChanges relationship -> rides #38's
+             composite NestedConnectionLoader. Ordered by the child PK (orderFacilityChangeId), which is
+             assigned in change-time order. -->
+        <edge name="facilityChangeHistory" entity-relationship="facilityChanges"
+              target-type="OrderFacilityChange" list="true"/>
     </gql-type>
 
     <gql-type name="OrderItem" entity-name="org.apache.ofbiz.order.order.OrderItem">
