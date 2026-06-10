@@ -53,6 +53,12 @@ class PreparsedCacheTests extends Specification {
         cache().get(q) != null             // one prepared entry, two binds
     }
 
+    def "the document cache has the configured size cap (MoquiConf max-elements, not unbounded)"() {
+        expect: // cap from component MoquiConf <cache name="gql.preparsed.document" max-elements="1000"/>
+        cache().unwrap(org.moqui.jcache.MCache) != null
+        cache().unwrap(org.moqui.jcache.MCache).getMaxEntries() == 1000
+    }
+
     def "caching the document does not bypass the governor (gate runs per execution)"() {
         given:
         def bad = 'query { orders{ edges{ node{ orderId } } } }'   // valid GraphQL, but no first -> FIRST_REQUIRED

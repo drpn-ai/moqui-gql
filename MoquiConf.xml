@@ -34,5 +34,11 @@
         <!-- Per-shape running stats (QueryStats). Capped so unbounded distinct query shapes cannot
              leak memory; evicting a cold shape loses only its un-flushed bin + warm-up (accepted). -->
         <cache name="gql.query.stats" max-elements="2000" eviction-strategy="least-recently-used"/>
+        <!-- Parsed-document cache is keyed by the raw query string; without a cap a caller sending
+             unique query strings grows it without bound (unconfigured Moqui caches have no size limit).
+             1000 entries is generous for legitimate reuse — the prepare-once premise is a small set of
+             query shapes per client. eviction-strategy applies only if this cache is ever distributed;
+             the local MCache evicts by last access when max-elements is exceeded. -->
+        <cache name="gql.preparsed.document" max-elements="1000" eviction-strategy="least-recently-used"/>
     </cache-list>
 </moqui-conf>
