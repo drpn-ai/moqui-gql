@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/entity-definition-3.xsd">
-    <!-- Observability: one row per GraphQL request (verdict/cost/rows/duration). Drives threshold
-         tuning and reveals which agent queries get rejected. Written in its own transaction so a log
-         failure never fails the user's request. -->
-    <entity entity-name="GqlQueryLog" package="moqui.gql">
+    <!-- Observability raw rows — query-log v2 policy: every REJECTED request, ALLOWED requests that
+         are slow for their shape (QueryStats: avg + 2.6 sigma after warm-up, over slowMinMillis), and
+         a small random sample (gql.queryLog.sampleRate). Aggregates for every hit are in
+         GqlQueryStatsBin; rows join shapes via queryHash. Written in its own transaction so a log
+         failure never fails the user's request. Purged after gql.queryLog.retainDays. -->
+    <entity entity-name="GqlQueryLog" package="moqui.gql" short-alias="gqlQueryLogs">
+        <description>One raw observability row per logged GraphQL request: verdict, governor cost,
+            rows fetched, duration, and the query text. See the v2 logging policy above for which
+            requests produce a row.</description>
         <field name="queryLogId" type="id" is-pk="true"/>
         <field name="queryDate" type="date-time"/>
         <field name="userId" type="id"/>
@@ -13,8 +18,45 @@
         <field name="estimatedCost" type="number-integer"/>
         <field name="rowsFetched" type="number-integer"/>
         <field name="durationMs" type="number-integer"/>
+        <field name="queryHash" type="text-medium"/>
+        <field name="slowHit" type="text-indicator"/>
         <field name="queryText" type="text-very-long"/>
         <index name="GQL_QLOG_DATE"><index-field name="queryDate"/></index>
+        <index name="GQL_QLOG_HASH"><index-field name="queryHash"/></index>
+    </entity>
+
+    <!-- One row per distinct query SHAPE (hash of the raw query string — the same identity the
+         preparsed-document cache keys on). Raw log rows and stats bins join here by queryHash so
+         analysis groups by shape without parsing truncated query text. -->
+    <entity entity-name="GqlQueryShape" package="moqui.gql" short-alias="gqlQueryShapes">
+        <description>A distinct GraphQL query shape: queryHash = SHA-256 hex of the raw query string,
+            with the (truncated) query text captured once on first sight.</description>
+        <field name="queryHash" type="text-medium" is-pk="true"/>
+        <field name="queryText" type="text-very-long"/>
+        <field name="firstSeenDate" type="date-time"/>
+    </entity>
+
+    <!-- Per-shape execution aggregates (the framework ArtifactHitBin analogue), flushed inline when a
+         bin ages past gql.queryLog.binSeconds. avg(totalDurationMs/hitCount) vs avg(totalCost/hitCount)
+         per shape IS the cost-model calibration dataset; totalSquaredDuration enables stddev. -->
+    <entity entity-name="GqlQueryStatsBin" package="moqui.gql" short-alias="gqlQueryStatsBins">
+        <description>One time-bin of execution stats for a query shape: hit/slow counts, duration
+            totals and extrema, summed governor cost and rows fetched.</description>
+        <field name="statsBinId" type="id" is-pk="true"/>
+        <field name="queryHash" type="text-medium"/>
+        <field name="binStartDate" type="date-time"/>
+        <field name="binEndDate" type="date-time"/>
+        <field name="hitCount" type="number-integer"/>
+        <field name="slowHitCount" type="number-integer"/>
+        <field name="totalDurationMs" type="number-integer"/>
+        <field name="totalSquaredDuration" type="number-float"/>
+        <field name="minDurationMs" type="number-integer"/>
+        <field name="maxDurationMs" type="number-integer"/>
+        <field name="totalCost" type="number-integer"/>
+        <field name="totalRows" type="number-integer"/>
+        <relationship type="one" related="moqui.gql.GqlQueryShape" short-alias="shape">
+            <key-map field-name="queryHash"/></relationship>
+        <index name="GQL_QSBIN_SHAPE"><index-field name="queryHash"/><index-field name="binStartDate"/></index>
     </entity>
 
     <!-- Phase-2 caller policy. A profile sets per-caller governor limits (null field = inherit the

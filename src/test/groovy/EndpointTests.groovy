@@ -47,7 +47,9 @@ class EndpointTests extends Specification {
     }
 
     def "an allowed request writes a GqlQueryLog row (verdict ALLOWED + cost + duration)"() {
-        given:
+        given: // v2 policy: ALLOWED rows are written only when slow or sampled — pin sampling on
+        def saved = System.getProperty("gql.queryLog.sampleRate")
+        System.setProperty("gql.queryLog.sampleRate", "1")
         def qtext = 'query LogAllow { order(orderId:"' + sampleOrderId + '"){ orderId } }'
         when:
         new GqlEngine(ec).execute(qtext, [:], null)
@@ -58,6 +60,8 @@ class EndpointTests extends Specification {
         row.get(0).verdict == "ALLOWED"
         row.get(0).durationMs != null
         row.get(0).estimatedCost != null
+        cleanup:
+        saved != null ? System.setProperty("gql.queryLog.sampleRate", saved) : System.clearProperty("gql.queryLog.sampleRate")
     }
 
     def "a rejected request is logged with verdict REJECTED + the rejection code"() {

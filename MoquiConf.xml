@@ -14,8 +14,25 @@
     <default-property name="gql.wallClockBudgetMs" value="30000"/>
     <default-property name="gql.useClone" value="true"/>
 
+    <!-- Query-log v2 policy (see docs/implementation-plan-query-log-v2.md). Raw GqlQueryLog rows:
+         every REJECTED query; ALLOWED queries slow for their shape (avg + 2.6 sigma after warmupHits,
+         over slowMinMillis — framework slow-hit math); plus a sampleRate random sample. All hits
+         aggregate into per-shape GqlQueryStatsBin rows of binSeconds length. -->
+    <default-property name="gql.queryLog.slowMinMillis" value="1000"/>
+    <default-property name="gql.queryLog.warmupHits" value="50"/>
+    <default-property name="gql.queryLog.sampleRate" value="0.01"/>
+    <default-property name="gql.queryLog.binSeconds" value="900"/>
+    <default-property name="gql.queryLog.retainDays" value="90"/>      <!-- raw GqlQueryLog rows -->
+    <default-property name="gql.queryLog.binRetainDays" value="365"/>  <!-- GqlQueryStatsBin rows -->
+
     <!-- Builds + caches the GraphQLSchema (and cost model) at startup from graphql/*.gql.xml. -->
     <tools>
         <tool-factory class="org.moqui.gql.GqlToolFactory" init-priority="50"/>
     </tools>
+
+    <cache-list>
+        <!-- Per-shape running stats (QueryStats). Capped so unbounded distinct query shapes cannot
+             leak memory; evicting a cold shape loses only its un-flushed bin + warm-up (accepted). -->
+        <cache name="gql.query.stats" max-elements="2000" eviction-strategy="least-recently-used"/>
+    </cache-list>
 </moqui-conf>

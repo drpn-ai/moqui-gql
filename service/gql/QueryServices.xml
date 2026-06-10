@@ -36,4 +36,33 @@
             </script>
         </actions>
     </service>
+
+    <service verb="purge" noun="QueryLog" authenticate="true">
+        <description>Retention purge for query-log v2: deletes GqlQueryLog raw rows older than
+            retainDays and GqlQueryStatsBin rows whose binStartDate is older than binRetainDays
+            (defaults from the gql.queryLog.retainDays / gql.queryLog.binRetainDays properties).
+            Run daily by the purge_GqlQueryLog ServiceJob; GqlQueryShape rows are kept (tiny, one
+            per distinct shape).</description>
+        <in-parameters>
+            <parameter name="retainDays" type="Integer"/>
+            <parameter name="binRetainDays" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="rawPurged" type="Long"/>
+            <parameter name="binsPurged" type="Long"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                int rd = retainDays != null ? retainDays as int : (System.getProperty("gql.queryLog.retainDays") ?: "90") as int
+                int brd = binRetainDays != null ? binRetainDays as int : (System.getProperty("gql.queryLog.binRetainDays") ?: "365") as int
+                java.sql.Timestamp rawCutoff = new java.sql.Timestamp(System.currentTimeMillis() - rd * 86400000L)
+                java.sql.Timestamp binCutoff = new java.sql.Timestamp(System.currentTimeMillis() - brd * 86400000L)
+                rawPurged = ec.entity.find("moqui.gql.GqlQueryLog")
+                        .condition("queryDate", org.moqui.entity.EntityCondition.LESS_THAN, rawCutoff).deleteAll()
+                binsPurged = ec.entity.find("moqui.gql.GqlQueryStatsBin")
+                        .condition("binStartDate", org.moqui.entity.EntityCondition.LESS_THAN, binCutoff).deleteAll()
+                ec.logger.info("gql purge#QueryLog: removed ${rawPurged} raw rows (>${rd}d), ${binsPurged} bins (>${brd}d)")
+            ]]></script>
+        </actions>
+    </service>
 </services>

@@ -45,6 +45,12 @@ class GqlEngine {
     private final int serviceBatchKeyLimit
     private final Map<String, Integer> govCfg
 
+    // query-log v2 policy knobs (see docs/implementation-plan-query-log-v2.md)
+    private final long slowMinMillis
+    private final int warmupHits
+    private final double sampleRate
+    private final long binMillis
+
     GqlEngine(ExecutionContext ec) {
         this.ec = ec
         this.built = (BuiltSchema) ec.factory.getToolFactory("GraphQL").getInstance()
@@ -53,6 +59,10 @@ class GqlEngine {
         this.maxFirst = (sysOr("gql.maxFirst", "100")) as int
         this.maxRowsPerLevel = (sysOr("gql.maxRowsPerLevel", "5000")) as int
         this.serviceBatchKeyLimit = (sysOr("gql.serviceBatchKeyLimit", "1000")) as int
+        this.slowMinMillis = (sysOr("gql.queryLog.slowMinMillis", "1000")) as long
+        this.warmupHits = (sysOr("gql.queryLog.warmupHits", "50")) as int
+        this.sampleRate = (sysOr("gql.queryLog.sampleRate", "0.01")) as double
+        this.binMillis = ((sysOr("gql.queryLog.binSeconds", "900")) as long) * 1000L
         this.govCfg = [
                 maxDepth             : (sysOr("gql.maxDepth", "6")) as int,
                 maxCost              : (sysOr("gql.maxCost", "1000")) as int,
@@ -123,7 +133,7 @@ class GqlEngine {
                     [maximumAvailable: td.maximumAvailable, currentlyAvailable: (long) td.currentlyAvailable, restoreRate: td.restoreRate] :
                     [maximumAvailable: effectiveCfg.bucketSize, currentlyAvailable: effectiveCfg.bucketSize, restoreRate: effectiveCfg.restoreRate]
             Map extensions = [cost: [requestedQueryCost: cost, actualQueryCost: cost, throttleStatus: throttle]]
-            writeQueryLog(query, cost, rows, durationMs, errors)
+            logQuery(query, (String) (profile?.profileId ?: "default"), cost, rows, durationMs, errors)
             return [data: data, errors: errors, extensions: extensions]
         } finally {
             if (scoped) ScopeFilters.reset()
@@ -156,26 +166,69 @@ class GqlEngine {
         return sum
     }
 
-    /** One observability row per request, in its own transaction — never fails the user's request. */
-    private void writeQueryLog(String query, long cost, int rows, long durationMs, List errors) {
+    /** Query-log v2 policy. Raw rows: every REJECTED query; ALLOWED queries that are slow for their
+     *  shape (QueryStats: avg + 2.6 sigma after warm-up, over slowMinMillis); plus a random sample.
+     *  Every ALLOWED hit feeds the per-shape stats; aged bins persist to GqlQueryStatsBin. All writes
+     *  in one separate transaction — a log failure never fails the user's request. */
+    private void logQuery(String query, String profileId, long cost, int rows, long durationMs, List errors) {
         try {
-            String verdict = errors.isEmpty() ? "ALLOWED" : "REJECTED"
+            boolean rejected = !errors.isEmpty()
+            String queryHash = sha256Hex(query)
+            org.moqui.gql.policy.QueryStats.Outcome outcome = null
+            boolean writeRow = rejected
+            if (!rejected) {
+                outcome = org.moqui.gql.policy.QueryStats.track(ec, queryHash, durationMs, cost, (long) rows,
+                        warmupHits, slowMinMillis, binMillis)
+                writeRow = outcome.slow ||
+                        (sampleRate > 0.0d && java.util.concurrent.ThreadLocalRandom.current().nextDouble() < sampleRate)
+            }
+            if (!writeRow && outcome?.finishedBin == null) return
+
             String rejectReason = null
-            if (!errors.isEmpty()) {
+            if (rejected) {
                 def ex = errors.get(0)?.extensions
                 rejectReason = (ex?.code) ?: errors.get(0)?.message
             }
             String q = query != null && query.length() > 4000 ? query.substring(0, 4000) : query
+            def fin = outcome?.finishedBin
+            long finEndMs = outcome != null ? outcome.finishedBinEndMs : 0L
+            boolean slow = outcome != null && outcome.slow
+            boolean doWriteRow = writeRow
             ec.transaction.runRequireNew(30, "gql query-log error", {
-                ec.entity.makeValue("moqui.gql.GqlQueryLog").setAll([
-                        queryDate: ec.user.nowTimestamp, userId: ec.user.userId,
-                        callerProfile: "default", verdict: verdict, rejectReason: rejectReason,
-                        estimatedCost: cost, rowsFetched: rows, durationMs: durationMs, queryText: q])
-                        .setSequencedIdPrimary().create()
+                // shape row first sight (find-then-create; raw rows + bins join here by hash)
+                if (ec.entity.find("moqui.gql.GqlQueryShape").condition("queryHash", queryHash)
+                        .disableAuthz().useCache(false).one() == null)
+                    ec.entity.makeValue("moqui.gql.GqlQueryShape").setAll([
+                            queryHash: queryHash, queryText: q, firstSeenDate: ec.user.nowTimestamp]).create()
+                if (fin != null)
+                    ec.entity.makeValue("moqui.gql.GqlQueryStatsBin").setAll([
+                            queryHash: queryHash,
+                            binStartDate: new java.sql.Timestamp(fin.binStartMs),
+                            binEndDate: new java.sql.Timestamp(finEndMs),
+                            hitCount: fin.hitCount, slowHitCount: fin.slowHitCount,
+                            totalDurationMs: (long) fin.totalMs, totalSquaredDuration: fin.totalSqMs,
+                            minDurationMs: fin.minMs, maxDurationMs: fin.maxMs,
+                            totalCost: fin.totalCost, totalRows: fin.totalRows])
+                            .setSequencedIdPrimary().create()
+                if (doWriteRow)
+                    ec.entity.makeValue("moqui.gql.GqlQueryLog").setAll([
+                            queryDate: ec.user.nowTimestamp, userId: ec.user.userId,
+                            callerProfile: profileId, verdict: rejected ? "REJECTED" : "ALLOWED",
+                            rejectReason: rejectReason, estimatedCost: cost, rowsFetched: rows,
+                            durationMs: durationMs, queryHash: queryHash, slowHit: slow ? "Y" : "N",
+                            queryText: q])
+                            .setSequencedIdPrimary().create()
             })
         } catch (Throwable t) {
-            ec.logger.warn("gql: failed to write GqlQueryLog: " + t.message)
+            ec.logger.warn("gql: failed to write query log: " + t.message)
         }
+    }
+
+    private static String sha256Hex(String s) {
+        byte[] d = java.security.MessageDigest.getInstance("SHA-256").digest((s ?: "").getBytes("UTF-8"))
+        StringBuilder sb = new StringBuilder(d.length * 2)
+        for (byte b in d) sb.append(String.format("%02x", b))
+        return sb.toString()
     }
 
     /** Resolve batching metadata for every nested has-many (list) edge from the Moqui relationship model. */

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Loaded once at initial setup (seed). Query-log v2 retention: a daily job purging GqlQueryLog raw
+     rows past gql.queryLog.retainDays and GqlQueryStatsBin rows past gql.queryLog.binRetainDays
+     (the service reads those properties when no explicit parameters are set). -->
+<entity-facade-xml type="seed">
+    <moqui.service.job.ServiceJob jobName="purge_GqlQueryLog" description="Daily retention purge of the GraphQL query log (raw rows + stats bins)"
+            serviceName="gql.QueryServices.purge#QueryLog" cronExpression="0 0 3 * * ?" paused="N"/>
+</entity-facade-xml>

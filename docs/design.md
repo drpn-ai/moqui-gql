@@ -191,6 +191,33 @@ the client keeps the cost model honest and the API a clean data graph.
    DataLoader-batched inside lists and carries a high fixed cost.
 3. Does the service do any write or have side effects? → not allowed on the read graph.
 
+### Observability & query-log policy (decision 13 — query-log v2)
+
+The per-request `GqlQueryLog` write is governed by a policy, not unconditional (the original
+v1 wrote a synchronous `runRequireNew` row for every request — an extra DB transaction in the
+request path of a layer whose purpose is protecting the database). A query **shape** is
+`queryHash` = SHA-256 of the raw query string (the same identity the preparsed-document cache
+keys on); `GqlQueryShape` maps hash → text once.
+
+- **Raw rows** (`GqlQueryLog`): every REJECTED query; ALLOWED queries **slow for their shape**
+  (`QueryStats`, mirroring the framework's `ArtifactStatsInfo` math: duration > running
+  avg + 2.6 sigma, after `gql.queryLog.warmupHits`, over the absolute `gql.queryLog.slowMinMillis`
+  floor); plus a `gql.queryLog.sampleRate` random sample so the dataset keeps representative
+  non-slow rows. Rows record the **resolved caller profile** and `queryHash`.
+- **Stats bins** (`GqlQueryStatsBin`, the `ArtifactHitBin` analogue): every ALLOWED hit
+  accumulates into the shape's current bin (hit/slow counts, duration totals + extrema + sum of
+  squares, summed cost and rows); bins flush inline when older than `gql.queryLog.binSeconds`.
+  Per-shape `avg(duration)` vs `avg(estimatedCost)` from the bins is the **cost-model
+  calibration dataset** — the feedback loop for the governor's cost weights.
+- **Bounded state**: per-shape running stats live in the capped `gql.query.stats` cache
+  (LRU; evicting a cold shape loses only its un-flushed bin + warm-up).
+- **Retention**: the daily `purge_GqlQueryLog` ServiceJob deletes raw rows past
+  `gql.queryLog.retainDays` (90) and bins past `gql.queryLog.binRetainDays` (365); shape rows
+  are kept (one per distinct shape).
+
+What the log is FOR: (1) cost-model calibration from the bins; (2) limit tuning + the AI-agent
+retry-loop signal from the rejected raw rows; (3) slow-query debugging from the slow raw rows.
+
 ### Governance layers (decision 4)
 
 1. **Static structural limits** (pre-plan): max depth, max field count, max

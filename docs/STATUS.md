@@ -4,11 +4,11 @@ A curated, **read-only GraphQL layer** over the HotWax/Maarg OMS data model, mod
 Admin API (query language + `extensions.cost`), fronted by a **cost governor** so internal apps, AI
 agents, and partners can fetch nested OMS data without harming the system.
 
-**Status:** Phases 1, 1.5, 2, 3, and epic #46 complete and merged to `main`. **92 tests pass (3 skipped)** across
-31 classes, all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The
+**Status:** Phases 1, 1.5, 2, 3, epic #46, and query-log v2 complete. **104 tests pass (3 skipped)** across
+33 classes, all run against the live MySQL `hcsd_notnaked` database (real OMS data, not fixtures). The
 only outstanding item is a framework dependency (see below).
 
-Last updated: 2026-06-09.
+Last updated: 2026-06-10.
 
 ---
 
@@ -57,7 +57,8 @@ Purely declarative `*.gql.xml` additions — **zero engine changes**.
 | Throttle | Live per-caller token bucket → `THROTTLED`; live `throttleStatus` |
 | Caller policies | `GqlCallerProfile` overrides limits per caller; activates the `ScopeFilter` row-scope seam |
 | Query cache | Prepared-statement document cache (`CachingPreparsedDocumentProvider`) — parsed + validated `Document` cached per query string (JDBC prepared-statement analogue) |
-| Endpoint + observability | `POST /rest/s1/graphql`, `GET /rest/s1/graphql/sdl`; one `GqlQueryLog` row per request (verdict/cost/rows/duration) |
+| Endpoint + observability | `POST /rest/s1/graphql`, `GET /rest/s1/graphql/sdl`; query-log v2 (below) |
+| Query-log v2 | Raw `GqlQueryLog` rows only for: every REJECTED query; ALLOWED queries slow for their shape (`QueryStats`: avg + 2.6 sigma after warm-up, over `slowMinMillis` — the framework slow-hit math); a `sampleRate` random sample. Every ALLOWED hit aggregates into per-shape `GqlQueryStatsBin` rows (the cost-calibration dataset: avg duration vs avg estimated cost per `queryHash`). Resolved caller profile recorded. Daily `purge_GqlQueryLog` ServiceJob enforces retention. |
 
 ### Stable error codes (governor, pre-execution)
 `DEPTH_EXCEEDED` · `COST_EXCEEDED` · `FIRST_REQUIRED` · `FIRST_TOO_LARGE` · `FIELD_NOT_FILTERABLE` ·

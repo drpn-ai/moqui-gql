@@ -59,4 +59,23 @@ class CallerProfileTests extends Specification {
         !r.data.orders.edges.isEmpty()
         r.data.orders.edges.every { it.node.productStoreId == scopedStore }
     }
+
+    def "the query log records the RESOLVED profile id, not 'default' (query-log v2)"() {
+        given:
+        assign("restricted", [maxCost: 50, bucketSize: 1000000000, restoreRate: 50])
+        def saved = System.getProperty("gql.queryLog.sampleRate")
+        System.setProperty("gql.queryLog.sampleRate", "1")
+        def qtext = 'query ProfileLogged_' + Long.toString(System.currentTimeMillis(), 36) +
+                ' { orders(first:1){ edges{ node{ orderId } } } }'   // cost 2, allowed under maxCost 50
+        when:
+        def r = new GqlEngine(ec).execute(qtext, [:], null)
+        def rows = ec.entity.find("moqui.gql.GqlQueryLog").condition("queryText", qtext)
+                .orderBy("-queryLogId").disableAuthz().maxRows(1).fetchSize(1).list()
+        then:
+        r.errors.isEmpty()
+        !rows.isEmpty()
+        rows.get(0).callerProfile == "restricted"
+        cleanup:
+        saved != null ? System.setProperty("gql.queryLog.sampleRate", saved) : System.clearProperty("gql.queryLog.sampleRate")
+    }
 }

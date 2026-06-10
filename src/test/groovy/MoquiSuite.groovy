@@ -11,6 +11,7 @@ import org.moqui.Moqui
         GovernorTests.class, EndpointTests.class, ScopeSeamTests.class, ConnectionWalkTests.class,
         CatalogContractTests.class, OrderDetailEdgesTests.class, ProductFacilityTests.class,
         ThrottleGateTests.class, ThrottleE2ETests.class, CallerProfileTests.class, PreparsedCacheTests.class,
+        QueryStatsTests.class, QueryLogPolicyTests.class,
         BillToCustomerTests.class, SchemaContractTests.class, OrderItemCountTests.class,
         ShipGroupItemsTests.class, ShipGroupDetailEdgesTests.class ])
 class MoquiSuite {
