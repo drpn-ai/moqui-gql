@@ -34,6 +34,10 @@ task deployToLib(type: Copy, dependsOn: jar) {
     into "${projectDir}/lib"
     rename { 'moqui-gql.jar' }
 }
+// Auto-deploy on every build so lib/moqui-gql.jar can never go stale relative to the source (mirrors
+// moqui-ai's `jar.finalizedBy refreshLibJar`). `./gradlew run`/`build` runs the per-component `build`
+// task, so this keeps the running server's jar in sync without a manual deployToLib step.
+jar.finalizedBy deployToLib
 
 test {
     useJUnitPlatform()
