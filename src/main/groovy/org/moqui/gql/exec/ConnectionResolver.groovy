@@ -37,14 +37,12 @@ import org.moqui.impl.entity.EntityFacadeImpl
 class ConnectionResolver {
     private final ExecutionContext ec
     private final boolean useClone
-    private final int queryTimeoutSeconds
     private final int maxFirst
     private final SearchQueryParser searchParser = new SearchQueryParser()
 
-    ConnectionResolver(ExecutionContext ec, boolean useClone, int queryTimeoutSeconds, int maxFirst) {
+    ConnectionResolver(ExecutionContext ec, boolean useClone, int maxFirst) {
         this.ec = ec
         this.useClone = useClone
-        this.queryTimeoutSeconds = queryTimeoutSeconds
         this.maxFirst = maxFirst
     }
 
@@ -127,7 +125,7 @@ class ConnectionResolver {
         ScopeFilters.apply(ef, entityName, ec)   // row-scope seam (phase-1 no-op)
         String dir = scanDescending ? "-" : ""
         for (String f in orderingFields) ef.orderBy(dir + f)
-        ef.useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(limit + 1).fetchSize(limit + 1)
+        ef.useClone(useClone).maxRows(limit + 1).fetchSize(limit + 1)
         EntityList rows = ef.list()
 
         // ----- build edges (in connection order) + pageInfo -----

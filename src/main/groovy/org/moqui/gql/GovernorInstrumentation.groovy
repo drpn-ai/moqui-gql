@@ -73,7 +73,7 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     }
 
     /** Runtime backstop: abort mid-fetch if the request blows its wall-clock budget (a query that
-     *  passed the static gate but still runs long). Pairs with the per-statement queryTimeout. */
+     *  passed the static gate but still runs long). Pairs with the per-request JTA transaction timeout. */
     @Override
     InstrumentationContext<Object> beginFieldFetch(InstrumentationFieldFetchParameters params, InstrumentationState state) {
         if (System.nanoTime() > deadlineNanos)

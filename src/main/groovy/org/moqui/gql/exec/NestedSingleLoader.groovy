@@ -25,20 +25,19 @@ class NestedSingleLoader implements MappedBatchLoaderWithContext<Object, Object>
     private final String childEntityName
     private final String fkField
     private final boolean useClone
-    private final int queryTimeoutSeconds
     private final int maxRowsPerLevel
 
     NestedSingleLoader(ExecutionContext ec, String childEntityName, String fkField,
-                       boolean useClone, int queryTimeoutSeconds, int maxRowsPerLevel) {
+                       boolean useClone, int maxRowsPerLevel) {
         this.ec = ec; this.childEntityName = childEntityName; this.fkField = fkField
-        this.useClone = useClone; this.queryTimeoutSeconds = queryTimeoutSeconds; this.maxRowsPerLevel = maxRowsPerLevel
+        this.useClone = useClone; this.maxRowsPerLevel = maxRowsPerLevel
     }
 
     @Override
     CompletionStage<Map<Object, Object>> load(Set<Object> keys, BatchLoaderEnvironment env) {
         EntityFind ef = ec.entity.find(childEntityName)
                 .condition(fkField, EntityCondition.IN, new ArrayList<Object>(keys))
-                .useClone(useClone).queryTimeout(queryTimeoutSeconds)
+                .useClone(useClone)
                 .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000))
         ScopeFilters.apply(ef, childEntityName, ec)   // row-scope seam (phase-1 no-op)
         EntityList rows = ef.list()

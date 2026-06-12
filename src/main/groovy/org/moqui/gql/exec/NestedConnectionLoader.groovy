@@ -37,7 +37,6 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
     private final List<String> fkFields
     private final List<String> intraGroupFields
     private final boolean useClone
-    private final int queryTimeoutSeconds
     private final int maxFirst
     private final int maxRowsPerLevel
     /** true -> return a plain [Type!]! node list per parent; false -> a Relay connection map. */
@@ -47,11 +46,11 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
     private final String excludeEmptyRelationship
 
     NestedConnectionLoader(ExecutionContext ec, String childEntityName, List<String> fkFields,
-                           List<String> intraGroupFields, boolean useClone, int queryTimeoutSeconds,
+                           List<String> intraGroupFields, boolean useClone,
                            int maxFirst, int maxRowsPerLevel, boolean plainList, String excludeEmptyRelationship) {
         this.ec = ec; this.childEntityName = childEntityName; this.fkFields = fkFields
         this.intraGroupFields = intraGroupFields; this.useClone = useClone
-        this.queryTimeoutSeconds = queryTimeoutSeconds; this.maxFirst = maxFirst
+        this.maxFirst = maxFirst
         this.maxRowsPerLevel = maxRowsPerLevel; this.plainList = plainList
         this.excludeEmptyRelationship = excludeEmptyRelationship
     }
@@ -80,7 +79,7 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
             }
             cf.condition(ecf.makeCondition(ors, EntityCondition.OR))
         }
-        cf.orderBy(orderByList()).useClone(useClone).queryTimeout(queryTimeoutSeconds)
+        cf.orderBy(orderByList()).useClone(useClone)
                 .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000))
         ScopeFilters.apply(cf, childEntityName, ec)   // row-scope seam (phase-1 no-op)
         EntityList rows = cf.list()
@@ -207,7 +206,7 @@ class NestedConnectionLoader implements MappedBatchLoaderWithContext<Object, Obj
             ef.condition(ecf.makeCondition(ors, EntityCondition.OR))
         }
         for (String cf in childFks) ef.selectField(cf)
-        ef.distinct(true).useClone(useClone).queryTimeout(queryTimeoutSeconds)
+        ef.distinct(true).useClone(useClone)
                 .maxRows(maxRowsPerLevel).fetchSize(Math.min(maxRowsPerLevel, 1000))
         ScopeFilters.apply(ef, ri.relatedEntityName, ec)
         EntityList found = ef.list()

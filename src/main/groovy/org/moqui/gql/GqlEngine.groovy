@@ -274,9 +274,9 @@ class GqlEngine {
         DataLoaderRegistry reg = new DataLoaderRegistry()
         for (NestedEdgeMeta meta in metas) {
             def loader = meta.single ?
-                    new NestedSingleLoader(ec, meta.childEntityName, meta.fkField, useClone, queryTimeoutSeconds, maxRowsPerLevel) :
+                    new NestedSingleLoader(ec, meta.childEntityName, meta.fkField, useClone, maxRowsPerLevel) :
                     new NestedConnectionLoader(ec, meta.childEntityName, meta.fkFields, meta.intraGroupFields,
-                            useClone, queryTimeoutSeconds, maxFirst, maxRowsPerLevel, meta.plain,
+                            useClone, maxFirst, maxRowsPerLevel, meta.plain,
                             meta.excludeEmptyRelationship)
             reg.register(meta.loaderName, DataLoaderFactory.newMappedDataLoader(loader))
         }
@@ -360,7 +360,7 @@ class GqlEngine {
             } else if (rq.list) {
                 code.dataFetcher(FieldCoordinates.coordinates("Query", rq.name),
                         ({ DataFetchingEnvironment env ->
-                            new ConnectionResolver(ec, useClone, queryTimeoutSeconds, maxFirst)
+                            new ConnectionResolver(ec, useClone, maxFirst)
                                     .resolveRoot(rq, tt, env.getArguments(), requestedAggregates(tt, env, true))
                         } as DataFetcher))
             } else if (rq.byIdentification) {
@@ -375,14 +375,14 @@ class GqlEngine {
                             def af = ec.entity.find(rq.identEntity).condition(rq.identValueField, valueVal)
                             if (typeVal != null && rq.identTypeField) af.condition(rq.identTypeField, typeVal)
                             ScopeFilters.apply(af, rq.identEntity, ec)
-                            def assoc = af.useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(1).fetchSize(1).list()
+                            def assoc = af.useClone(useClone).maxRows(1).fetchSize(1).list()
                             if (!assoc) return null
                             def fkVal = assoc.get(0).get(rq.identFkField)
                             if (fkVal == null) return null
                             def tgtPk = ((EntityFacadeImpl) ec.entity).getEntityDefinition(targetEntity).getPkFieldNames().get(0)
                             def tgtFind = ec.entity.find(targetEntity).condition(tgtPk, fkVal)
                             ScopeFilters.apply(tgtFind, targetEntity, ec)
-                            def tgt = tgtFind.useClone(useClone).queryTimeout(queryTimeoutSeconds).maxRows(1).fetchSize(1).list()
+                            def tgt = tgtFind.useClone(useClone).maxRows(1).fetchSize(1).list()
                             return tgt ? tgt.get(0).getMap() : null
                         } as DataFetcher))
             } else if (rq.byPk) {
@@ -405,7 +405,7 @@ class GqlEngine {
                             }
                             ScopeFilters.apply(find, entityName, ec)   // row-scope seam (phase-1 no-op)
                             // first-row semantics: composite-PK views (e.g. parties) can match >1 row
-                            def rows = find.useClone(useClone).queryTimeout(queryTimeoutSeconds)
+                            def rows = find.useClone(useClone)
                                     .maxRows(1).fetchSize(1).list()
                             return rows ? rows.get(0).getMap() : null
                         } as DataFetcher))
