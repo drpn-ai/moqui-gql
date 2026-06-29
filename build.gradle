@@ -1,7 +1,8 @@
 apply plugin: 'groovy'
 
-sourceCompatibility = '11'
-targetCompatibility = '11'
+// Darpan fork: Gradle 9 removed the project-level sourceCompatibility/targetCompatibility properties;
+// use the Java toolchain (matches the darpan component). JDK 21 baseline.
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 
 // projectDir = runtime/component/moqui-gql ; runtime dir is two levels up
 def runtimeDir = file("${projectDir}/../..")
@@ -14,6 +15,10 @@ repositories {
 
 dependencies {
     implementation project(':framework')
+    // Darpan fork: DarpanTenantScopeFilter calls darpan.facade.common.TenantAccessSupport. compileOnly —
+    // needed only at compile time; at runtime Moqui loads the darpan component on the shared classloader,
+    // so we must NOT inherit/vendor darpan's runtime deps here (avoids double-loading + jitpack resolution).
+    compileOnly project(':runtime:component:darpan')
     // Match mantle-shopify-connector (same runtime classloader) — bytecode-11, runs on JDK 11.
     implementation 'com.graphql-java:graphql-java:25.0'   // pulls java-dataloader transitively
     // JUnit Platform + Spock — mirrors moqui-ai / framework
@@ -38,6 +43,23 @@ task deployToLib(type: Copy, dependsOn: jar) {
 // moqui-ai's `jar.finalizedBy refreshLibJar`). `./gradlew run`/`build` runs the per-component `build`
 // task, so this keeps the running server's jar in sync without a manual deployToLib step.
 jar.finalizedBy deployToLib
+
+// Darpan fork: vendor moqui-gql's unique runtime deps (graphql-java + java-dataloader + transitives)
+// into lib/ so Moqui loads them from lib/*.jar. Upstream relied on mantle-shopify-connector to supply
+// graphql-java on the shared classloader; Darpan has no such component. Subtract the framework and darpan
+// classpaths/jars (Moqui loads those components separately) so only graphql-java's tree is vendored.
+task cleanLib(type: Delete) { delete fileTree(dir: projectDir.absolutePath + '/lib', include: '*') }
+clean.dependsOn cleanLib
+task copyDependencies { doLast {
+    copy {
+        from (configurations.runtimeClasspath
+              - project(':framework').configurations.runtimeClasspath
+              - project(':framework').tasks.named('jar').get().archiveFile.get().asFile)
+        into file(projectDir.absolutePath + '/lib')
+    }
+}}
+copyDependencies.dependsOn cleanLib
+jar.dependsOn copyDependencies
 
 test {
     useJUnitPlatform()

@@ -106,7 +106,12 @@ class GqlEngine {
         }
         boolean scoped = false
         try {
-            if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)); scoped = true }
+            // Darpan fork: tenant row-scope is MANDATORY (shared-DB multi-tenancy). Default EVERY request to
+            // the fail-closed DarpanTenantScopeFilter so reads can never span tenants; a caller profile's
+            // productStore scope (OMS heritage) still overrides when explicitly set.
+            if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
+            else { ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter()) }
+            scoped = true
             List<NestedEdgeMeta> metas = nestedEdgeMetas()
             GraphQLSchema executable = withFetchers(metas)
             // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB)

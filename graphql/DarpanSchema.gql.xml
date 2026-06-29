@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Darpan curated GraphQL schema (Phase 0 spike). Read-only, tenant-scoped.
+
+  Field/type names are the Darpan reconciliation domain; the query language is the moqui-gql
+  Shopify-shaped surface (query: search + sortKey/reverse + Relay connections). Every read is
+  tenant-scoped at runtime by DarpanTenantScopeFilter (companyUserGroupId == active tenant),
+  so a caller can only ever see their own tenant's results — see scope/DarpanTenantScopeFilter.groovy.
+
+  Phase-0 scope: one tenant-owned root (ReconciliationResult). The schema grows by adding more
+  gql-type blocks; transitively-owned entities (no companyUserGroupId) must be reached only via a
+  gated parent edge, never as an unscoped root (the filter denies unrecognized roots fail-closed).
+-->
+<gql-schema>
+    <gql-type name="ReconciliationResult" entity-name="darpan.reconciliation.ReconciliationRunResult">
+        <field name="reconciliationRunResultId" entity-field="reconciliationRunResultId" type="ID"/>
+        <field name="savedRunId" entity-field="savedRunId" filterable="true"/>
+        <field name="savedRunType" entity-field="savedRunType"/>
+        <field name="reconciliationRunId" entity-field="reconciliationRunId" filterable="true"/>
+        <field name="reconciliationMappingId" entity-field="reconciliationMappingId"/>
+        <field name="ruleSetId" entity-field="ruleSetId" filterable="true"/>
+        <field name="file1Name" entity-field="file1Name"/>
+        <field name="file2Name" entity-field="file2Name"/>
+        <field name="statusEnumId" entity-field="statusEnumId" filterable="true"/>
+        <field name="reconciliationType" entity-field="reconciliationType"/>
+        <field name="differenceCount" entity-field="differenceCount" type="Int"/>
+        <field name="onlyInFile1Count" entity-field="onlyInFile1Count" type="Int"/>
+        <field name="onlyInFile2Count" entity-field="onlyInFile2Count" type="Int"/>
+        <field name="createdDate" entity-field="createdDate" type="DateTime" sortable="true"/>
+
+        <root-query name="reconciliationResult" by-pk="true" pk-arg="reconciliationRunResultId"/>
+        <root-query name="reconciliationResults" list="true"
+            search-keys="savedRunId:eq,in reconciliationRunId:eq ruleSetId:eq statusEnumId:eq,in"
+            sort-keys="CREATED_DATE:createdDate RESULT_ID:reconciliationRunResultId"/>
+    </gql-type>
+</gql-schema>

@@ -24,14 +24,14 @@ class AggregateViewBuilder {
         EntityDynamicViewImpl dv = (EntityDynamicViewImpl) ef.makeEntityDynamicView()
         dv.addMemberEntity("PRIME", baseEntity, (String) null, (Boolean) null, (Map<String, String>) null)
         dv.addAliasAll("PRIME", (String) null)
-        int i = 0
-        for (GqlField af in aggFields) {
-            String alias = "AGG" + (i++)
-            Map<String, String> keyMap = new LinkedHashMap<String, String>()
-            keyMap.put(af.aggregateFk, af.aggregateFk)   // PRIME.fk = child.fk  (e.g. orderId = orderId)
-            dv.addMemberEntity(alias, af.aggregateEntity, "PRIME", Boolean.TRUE, keyMap,
-                    (List<Map<String, String>>) null, "true")             // sub-select -> LATERAL on mysql8
-            dv.addAlias(alias, af.name, af.aggregateField, af.aggregateFunction)  // orderItemCount = count-distinct(externalId)
+        // Darpan fork: aggregate (LATERAL) fields require the sub-select addMemberEntity overload that the
+        // upstream OMS framework had but Darpan's framework master does not. The Darpan curated schema
+        // declares no aggregate fields, so this path is never reached; guard it so adding one fails loudly
+        // here instead of mis-compiling. (Re-enable by porting the framework sub-select/LATERAL support.)
+        if (!aggFields.isEmpty()) {
+            throw new UnsupportedOperationException(
+                    "Aggregate (LATERAL) GraphQL fields are not supported in the Darpan moqui-gql fork: " +
+                    aggFields.collect { it.name })
         }
         dv.setEntityName(baseEntity.replace((char) '.', (char) '_') + "_Agg")
         return ef
