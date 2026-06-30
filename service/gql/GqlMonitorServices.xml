@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/service-definition-3.xsd">
+    <!-- Sustained-abuse detector for the public GraphQL API tier. Runs on a schedule (every ~15 min,
+         via GqlAnomalyScanJob ServiceJob in data/GqlSetupData.xml) and scans the GqlQueryLog for
+         per-caller metrics in the rolling window.
+
+         Relationship to the per-request throttle:
+           ThrottleGate (GovernorInstrumentation) is the real-time in-request gate — it rejects an
+           individual request when a caller depletes their token bucket within a single request window.
+           This service is the SUSTAINED-ABUSE DETECTOR: it looks back over N minutes and raises an
+           alert when a caller's aggregate volume, reject rate, or cost is anomalous across the window,
+           so an operator can throttle or revoke the key.
+
+         disableAuthz: the scan reads GqlQueryLog which has no tenant column — it is a global
+         observability store written by the engine for every caller across all tenants. The service
+         runs as a scheduler job (anonymous-all) and must disable authz to read these cross-caller
+         rows. It creates GqlAnomalyAlert rows in the same transaction-free style. No user data is
+         leaked — only the alerting aggregates (counts, costs) are materialized. -->
+
+    <service verb="scan" noun="QueryAnomalies" authenticate="anonymous-all" allow-remote="false">
+        <description>Rolling-window anomaly scan over GqlQueryLog. Groups log rows by userId in the
+            current window (now - windowMinutes .. now), computes per-caller volume / reject-rate /
+            cost, and emits a WARN log + a GqlAnomalyAlert row for each (caller, metric) breach.
+            Deduplicates: at most one alert per (caller, metric, window). Fail-safe: any uncaught
+            exception is logged as WARN and the service returns gracefully so the scheduler is never
+            poisoned. Out params: callersScanned (int), anomaliesFound (int).</description>
+        <out-parameters>
+            <parameter name="callersScanned" type="Integer"/>
+            <parameter name="anomaliesFound" type="Integer"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                try {
+                    // ---- Window configuration ---------------------------------------------------
+                    int windowMinutes = (System.getProperty("gql.anomaly.windowMinutes") ?: "15") as int
+                    long windowMs     = windowMinutes * 60_000L
+                    long nowMs        = System.currentTimeMillis()
+                    java.sql.Timestamp windowStart = new java.sql.Timestamp(nowMs - windowMs)
+                    java.sql.Timestamp windowEnd   = new java.sql.Timestamp(nowMs)
+
+                    // ---- Thresholds from System properties with defaults -----------------------
+                    int   maxQueries       = (System.getProperty("gql.anomaly.maxQueries")       ?: "2000")   as int
+                    long  maxCost          = (System.getProperty("gql.anomaly.maxCost")          ?: "500000")  as long
+                    double maxRejectRate   = (System.getProperty("gql.anomaly.maxRejectRate")    ?: "0.5")    as double
+                    int   minVolumeForRate = (System.getProperty("gql.anomaly.minVolumeForRate") ?: "20")     as int
+
+                    // ---- Fetch all GqlQueryLog rows in the window ------------------------------
+                    // disableAuthz is required: GqlQueryLog is a cross-caller observability store
+                    // with no tenant column, and this scheduler job runs as anonymous-all. We need
+                    // to read rows for every userId to detect per-caller abuse patterns.
+                    List logRows = ec.entity.find("moqui.gql.GqlQueryLog")
+                            .condition("queryDate", org.moqui.entity.EntityCondition.GREATER_THAN_EQUAL_TO, windowStart)
+                            .disableAuthz()
+                            .list()
+
+                    // ---- Group in-memory by userId ---------------------------------------------
+                    // Use a Map<String, Map> for accumulators keyed by userId.
+                    Map<String, Map<String, Object>> callerMap = [:]
+                    for (def row : logRows) {
+                        String uid = row.getString("userId") ?: "anonymous"
+                        if (!callerMap.containsKey(uid)) {
+                            callerMap[uid] = [queryCount: 0, rejectCount: 0, totalCost: 0L]
+                        }
+                        Map<String, Object> agg = callerMap[uid]
+                        agg.queryCount = (agg.queryCount as int) + 1
+                        if ("REJECTED" == row.getString("verdict")) {
+                            agg.rejectCount = (agg.rejectCount as int) + 1
+                        }
+                        Long cost = row.getLong("estimatedCost")
+                        agg.totalCost = (agg.totalCost as long) + (cost != null ? cost : 0L)
+                    }
+
+                    int scannedCount   = callerMap.size()
+                    int anomalyCount   = 0
+
+                    // ---- Per-caller threshold evaluation + dedup + alert ----------------------
+                    for (Map.Entry<String, Map<String, Object>> entry : callerMap.entrySet()) {
+                        String userId   = entry.key
+                        int  qCount     = entry.value.queryCount as int
+                        int  rCount     = entry.value.rejectCount as int
+                        long tCost      = entry.value.totalCost as long
+                        double rRate    = qCount > 0 ? (rCount / (double) qCount) : 0.0d
+
+                        // Evaluate each metric independently
+                        List<Map<String, Object>> breaches = []
+                        if (qCount > maxQueries) {
+                            breaches << [metricType: "VOLUME", observed: (double) qCount, threshold: (double) maxQueries]
+                        }
+                        if (tCost > maxCost) {
+                            breaches << [metricType: "COST", observed: (double) tCost, threshold: (double) maxCost]
+                        }
+                        if (rRate > maxRejectRate && qCount >= minVolumeForRate) {
+                            breaches << [metricType: "REJECT_RATE", observed: rRate, threshold: maxRejectRate]
+                        }
+
+                        for (Map<String, Object> breach : breaches) {
+                            String metricType = breach.metricType as String
+
+                            // DEDUP: skip if an alert already exists for this caller+metric in this window
+                            // (windowStartDate >= current windowStart means it belongs to the same or a
+                            // later window — one alert per caller+metric per window).
+                            long existingCount = ec.entity.find("moqui.gql.GqlAnomalyAlert")
+                                    .condition("userId", userId)
+                                    .condition("metricType", metricType)
+                                    .condition("windowStartDate", org.moqui.entity.EntityCondition.GREATER_THAN_EQUAL_TO, windowStart)
+                                    .disableAuthz()
+                                    .count()
+                            if (existingCount > 0) continue
+
+                            // Structured WARN — the ops log-alerting stream tails WARN from this package
+                            ec.logger.warn("GqlAnomalyAlert userId=${userId} metricType=${metricType}" +
+                                    " observedValue=${breach.observed} threshold=${breach.threshold}" +
+                                    " queryCount=${qCount} rejectCount=${rCount} totalCost=${tCost}" +
+                                    " windowStart=${windowStart} windowEnd=${windowEnd}")
+
+                            // Persist the alert row
+                            ec.entity.makeValue("moqui.gql.GqlAnomalyAlert")
+                                    .setAll([
+                                        userId          : userId,
+                                        metricType      : metricType,
+                                        windowStartDate : windowStart,
+                                        windowEndDate   : windowEnd,
+                                        observedValue   : breach.observed as BigDecimal,
+                                        threshold       : breach.threshold as BigDecimal,
+                                        queryCount      : (long) qCount,
+                                        rejectCount     : (long) rCount,
+                                        totalCost       : tCost,
+                                        status          : "NEW",
+                                        alertDate       : windowEnd
+                                    ])
+                                    .setSequencedIdPrimary()
+                                    .create()
+
+                            anomalyCount++
+                        }
+                    }
+
+                    ec.logger.info("gql scan#QueryAnomalies: window=${windowMinutes}min" +
+                            " callersScanned=${scannedCount} anomaliesFound=${anomalyCount}")
+
+                    callersScanned = scannedCount
+                    anomaliesFound = anomalyCount
+
+                } catch (Throwable t) {
+                    // FAIL-SAFE: a scan failure must never throw into the scheduler (it would
+                    // repeatedly retry and poison the job queue). Log it and return zeros.
+                    ec.logger.warn("gql scan#QueryAnomalies failed gracefully: ${t.message}", t)
+                    callersScanned = 0
+                    anomaliesFound = 0
+                }
+            ]]></script>
+        </actions>
+    </service>
+</services>

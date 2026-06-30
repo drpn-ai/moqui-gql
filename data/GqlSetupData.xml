@@ -5,4 +5,9 @@
 <entity-facade-xml type="seed">
     <moqui.service.job.ServiceJob jobName="purge_GqlQueryLog" description="Daily retention purge of the GraphQL query log (raw rows + stats bins)"
             serviceName="gql.QueryServices.purge#QueryLog" cronExpression="0 0 3 * * ?" paused="N"/>
+    <!-- Sustained-abuse anomaly scan — runs every 15 minutes (matching the default gql.anomaly.windowMinutes).
+         Override window size via the gql.anomaly.windowMinutes system property; update cronExpression to match.
+         Mirrors the purge_GqlQueryLog ServiceJob scheduling mechanism. -->
+    <moqui.service.job.ServiceJob jobName="GqlAnomalyScanJob" description="Per-caller anomaly detection over GqlQueryLog: volume / reject-rate / cost thresholds, dedup per window"
+            serviceName="gql.GqlMonitorServices.scan#QueryAnomalies" cronExpression="0 0/15 * * * ?" paused="N"/>
 </entity-facade-xml>
