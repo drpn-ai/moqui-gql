@@ -145,8 +145,11 @@ class GqlEngine {
             scoped = true
             List<NestedEdgeMeta> metas = nestedEdgeMetas()
             GraphQLSchema executable = withFetchers(metas)
-            // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB)
-            GovernorInstrumentation governor = new GovernorInstrumentation(ec, built, effectiveCfg)
+            // C4 governor: depth/cost/first/query/batch limits enforced pre-execution (nothing hits the DB).
+            // Throttle bucket key: the API-key id on the public realm (per-key bucket), else the session
+            // user. Without this, anonymous public requests would all share one "anonymous" bucket.
+            GovernorInstrumentation governor = new GovernorInstrumentation(ec, built, effectiveCfg,
+                    publicRealm ? overrideCallerId : (ec.user?.userId))
             GraphQL graphQL = GraphQL.newGraphQL(executable).instrumentation(governor)
                     .preparsedDocumentProvider(new CachingPreparsedDocumentProvider(ec)).build()
             ExecutionInput.Builder inB = ExecutionInput.newExecutionInput().query(query)

@@ -194,7 +194,7 @@
         <field name="queryCount" type="number-integer"/>
         <field name="rejectCount" type="number-integer"/>
         <field name="totalCost" type="number-integer"/>
-        <field name="status" type="text-short" default-value="NEW"/>
+        <field name="status" type="text-short" default="NEW"/>
         <field name="alertDate" type="date-time"/>
         <index name="GQL_AALERT_CALLER"><index-field name="userId"/><index-field name="metricType"/><index-field name="windowStartDate"/></index>
     </entity>

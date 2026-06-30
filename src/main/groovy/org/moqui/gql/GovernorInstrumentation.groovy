@@ -52,6 +52,11 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     private final long wallClockBudgetMs
     private final long deadlineNanos
     private final int bucketSize, restoreRate
+    /** Throttle bucket key — the API-key id for the public realm, ec.user.userId for the session realm.
+     *  Set explicitly by the engine so anonymous public API-key requests each get a PER-KEY bucket rather
+     *  than collapsing into one shared "anonymous" bucket (which would let one key throttle all callers,
+     *  and defeat per-key rate limits). Null falls back to ec.user.userId/anonymous. */
+    private final String callerKey
     /** Static cost estimate computed during the pre-execution walk; read by the engine for extensions.cost. */
     volatile long estimatedCost = 0L
     /** Live throttle decision (per-caller bucket) computed during the walk; read by the engine for throttleStatus. */
@@ -59,7 +64,12 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
     private static final long COST_CEILING = 100_000_000L
 
     GovernorInstrumentation(ExecutionContext ec, BuiltSchema built, Map<String, Integer> cfg) {
+        this(ec, built, cfg, null)
+    }
+
+    GovernorInstrumentation(ExecutionContext ec, BuiltSchema built, Map<String, Integer> cfg, String callerKey) {
         this.ec = ec; this.built = built; this.art = built.artifact
+        this.callerKey = callerKey
         this.indexClassifier = new IndexClassifier(ec)
         this.maxDepth = cfg.maxDepth; this.maxCost = cfg.maxCost; this.maxFirst = cfg.maxFirst
         this.serviceBatchKeyLimit = cfg.serviceBatchKeyLimit
@@ -105,8 +115,8 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
 
         // throttle is the LAST gate: debit the per-caller bucket only if the query would otherwise execute
         boolean willExecute = w.errors.isEmpty()
-        String callerKey = ec.user?.userId ?: "anonymous"
-        ThrottleGate.Decision td = ThrottleGate.check(ec, callerKey, cost, bucketSize, restoreRate, willExecute)
+        String effectiveCallerKey = (this.callerKey != null && !this.callerKey.isEmpty()) ? this.callerKey : (ec.user?.userId ?: "anonymous")
+        ThrottleGate.Decision td = ThrottleGate.check(ec, effectiveCallerKey, cost, bucketSize, restoreRate, willExecute)
         this.throttleDecision = td
         if (willExecute && !td.allowed)
             w.errors.add(err("throttled: query cost " + cost + " exceeds available " + (long) td.currentlyAvailable +
