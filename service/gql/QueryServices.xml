@@ -26,6 +26,73 @@
         </actions>
     </service>
 
+    <service verb="execute" noun="PublicQuery" authenticate="anonymous-all" allow-remote="true">
+        <description>PUBLIC GraphQL endpoint — a SEPARATE auth realm from execute#Query. Authentication is
+            API-KEY ONLY: the key is read from the request header (Authorization: Bearer &lt;key&gt;, or
+            X-Darpan-Gql-Key). A request carrying ONLY a Moqui session (login_key) and NO API key is
+            REJECTED here. SECURITY/fail-closed: if there is no web context, no key, or the key is invalid/
+            expired/disabled, an auth error is returned and the query NEVER runs. On a valid key the engine
+            runs with the key's FIXED tenant scope (DarpanTenantScopeFilter(companyUserGroupId)) and cost
+            profile — never the session/TenantAccessSupport path. Same {data, errors, extensions} envelope.</description>
+        <in-parameters>
+            <parameter name="query" required="true"/>
+            <parameter name="variables" type="Map"/>
+            <parameter name="operationName"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="data" type="Map"/>
+            <parameter name="errors" type="List"/>
+            <parameter name="extensions" type="Map"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                // ---- API-key extraction (fail-closed) -------------------------------------------------
+                // This realm is API-key ONLY. We deliberately do NOT consult ec.user / login_key here, so a
+                // request authenticated only by a Moqui session (no API key) is rejected below.
+                String apiKey = null
+                if (ec.web != null && ec.web.request != null) {
+                    String authz = ec.web.request.getHeader("Authorization")
+                    if (authz != null && authz.regionMatches(true, 0, "Bearer ", 0, 7)) {
+                        apiKey = authz.substring(7).trim()
+                    }
+                    if (apiKey == null || apiKey.isEmpty()) {
+                        String alt = ec.web.request.getHeader("X-Darpan-Gql-Key")
+                        if (alt != null) apiKey = alt.trim()
+                    }
+                }
+                if (apiKey == null || apiKey.isEmpty()) {
+                    // No web context or no key present -> 401-style auth error, query does NOT run.
+                    data = null
+                    errors = [[message: "missing API key", extensions: [code: "UNAUTHENTICATED"]]]
+                    extensions = [:]
+                    return
+                }
+            ]]></script>
+            <!-- Resolve the key (fail-closed inside resolve#ApiKey). ignore-error so we handle invalid
+                 ourselves and never let resolve's error message leak the specific failing check. -->
+            <service-call name="gql.GqlAuthServices.resolve#ApiKey" in-map="[apiKey: apiKey]"
+                          out-map="resolveOut" ignore-error="true"/>
+            <script><![CDATA[
+                if (resolveOut == null || resolveOut.valid != true) {
+                    // Invalid/expired/disabled key -> auth error, query does NOT run. Clear any error the
+                    // resolve call pushed so the response is the single generic message.
+                    ec.message.clearErrors()
+                    data = null
+                    errors = [[message: "invalid API key", extensions: [code: "UNAUTHENTICATED"]]]
+                    extensions = [:]
+                    return
+                }
+                // Valid: run with the key's FIXED tenant + profile (never the session path).
+                def result = new org.moqui.gql.GqlEngine(ec).execute(query, (Map) variables, operationName,
+                        [scopeTenantId: resolveOut.companyUserGroupId, profileId: resolveOut.profileId,
+                         callerId: resolveOut.apiKeyId])
+                data = result.data
+                errors = result.errors
+                extensions = result.extensions
+            ]]></script>
+        </actions>
+    </service>
+
     <service verb="get" noun="Sdl" authenticate="anonymous-all" allow-remote="true">
         <description>Published GraphQL SDL for the curated read schema.</description>
         <out-parameters><parameter name="sdl"/></out-parameters>

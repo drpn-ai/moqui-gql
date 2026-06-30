@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/service-definition-3.xsd">
+    <!-- Auth realm for the PUBLIC GraphQL tier (separate from the internal session /graphql endpoint).
+         SECURITY-CRITICAL: the raw API key is NEVER stored or logged — only its SHA-256 hex digest.
+         create#ApiKey mints a key (admin-only, raw key returned ONCE); resolve#ApiKey validates a
+         presented key fail-closed (by hash, not raw compare) and returns the key's fixed tenant + profile. -->
+
+    <service verb="create" noun="ApiKey" authenticate="true" allow-remote="true">
+        <description>Mint a per-client API key for the public GraphQL tier. SECURITY: generates a
+            cryptographically-random key (SecureRandom, 256 bits, URL-safe base64, prefixed "dgql_"),
+            stores ONLY its SHA-256 hex digest, and returns the RAW key exactly ONCE in the `apiKey`
+            out-param. The raw key is NOT recoverable afterwards — capture it now or re-mint. Admin-only
+            key minting: this does NOT require tenant membership, so a super-admin can mint keys for any
+            tenant. companyUserGroupId is the tenant every read made with this key is fixed to.</description>
+        <in-parameters>
+            <parameter name="companyUserGroupId" required="true"><description>The tenant this key is scoped to.</description></parameter>
+            <parameter name="clientName" required="true"><description>Human-readable client identity for audit.</description></parameter>
+            <parameter name="profileId"><description>Optional cost/governor profile (GqlCallerProfile).</description></parameter>
+            <parameter name="expireDate" type="Timestamp"><description>Optional expiry; null = never expires.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="apiKey"><description>The RAW key, shown ONCE and not recoverable. Deliver securely to the client.</description></parameter>
+            <parameter name="apiKeyId"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                // 256 bits of entropy from SecureRandom, URL-safe base64 (no padding), prefixed "dgql_".
+                String rawKey = org.moqui.gql.auth.ApiKeyHasher.generateRawKey()
+                // Store ONLY the hash. NEVER persist or log rawKey.
+                String keyHash = org.moqui.gql.auth.ApiKeyHasher.sha256Hex(rawKey)
+                String newId = ec.entity.sequencedIdPrimary("moqui.gql.GqlApiKey", null, null)
+                ec.entity.makeValue("moqui.gql.GqlApiKey").setAll([
+                        apiKeyId: newId, keyHash: keyHash, companyUserGroupId: companyUserGroupId,
+                        profileId: profileId, clientName: clientName, enabled: "Y",
+                        expireDate: expireDate, createdDate: ec.user.nowTimestamp]).create()
+                apiKeyId = newId
+                apiKey = rawKey
+                // Log identity only — never the raw key or its hash.
+                ec.logger.info("gql: minted API key apiKeyId=${newId} client='${clientName}' tenant=${companyUserGroupId}")
+            ]]></script>
+        </actions>
+    </service>
+
+    <service verb="resolve" noun="ApiKey" authenticate="anonymous-all">
+        <description>Internal: validate a presented raw API key fail-closed and return its fixed tenant +
+            profile. SECURITY: hashes the key (SHA-256) and looks it up BY HASH (no raw compare, no
+            substring/like match) — this also avoids timing leaks on the raw key. A blank/missing key,
+            no matching row, enabled != 'Y', or a passed expireDate all resolve as invalid. On any
+            failure `valid` is false and the error message is the generic "invalid API key" (the specific
+            failing check is never leaked). On success returns companyUserGroupId/profileId/apiKeyId/
+            clientName and best-effort updates lastUsedDate.</description>
+        <in-parameters>
+            <parameter name="apiKey" required="true"><description>The raw presented key (e.g. "dgql_...").</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="valid" type="Boolean"/>
+            <parameter name="companyUserGroupId"/>
+            <parameter name="profileId"/>
+            <parameter name="apiKeyId"/>
+            <parameter name="clientName"/>
+        </out-parameters>
+        <actions>
+            <script><![CDATA[
+                valid = false
+                // Fail-closed: a missing/blank/empty key never resolves as valid.
+                if (apiKey == null || apiKey.toString().trim().isEmpty()) {
+                    ec.message.addError("invalid API key")
+                    return
+                }
+                String keyHash = org.moqui.gql.auth.ApiKeyHasher.sha256Hex(apiKey.toString())
+                // System lookup by HASH (disableAuthz: this runs under the anonymous public realm). Exact
+                // equality on the unique keyHash index — never a substring/like match.
+                def row = ec.entity.find("moqui.gql.GqlApiKey").condition("keyHash", keyHash)
+                        .disableAuthz().useCache(false).one()
+                java.sql.Timestamp now = ec.user.nowTimestamp
+                boolean ok = row != null &&
+                        "Y".equals(row.enabled) &&
+                        (row.expireDate == null || ((java.sql.Timestamp) row.expireDate).after(now))
+                if (!ok) {
+                    // Do NOT leak which check failed beyond the generic message.
+                    ec.message.addError("invalid API key")
+                    return
+                }
+                valid = true
+                companyUserGroupId = row.companyUserGroupId
+                profileId = row.profileId
+                apiKeyId = row.apiKeyId
+                clientName = row.clientName
+                // Best-effort lastUsedDate update — must never fail/abort the resolution. Own transaction
+                // so it can't be poisoned by the read-only query transaction.
+                try {
+                    ec.transaction.runRequireNew(10, "gql api-key lastUsed update error", {
+                        ec.entity.find("moqui.gql.GqlApiKey").condition("apiKeyId", row.apiKeyId)
+                                .disableAuthz().one()?.set("lastUsedDate", now)?.update()
+                    })
+                } catch (Throwable t) {
+                    ec.logger.warn("gql: api-key lastUsedDate update failed for apiKeyId=${row.apiKeyId}: " + t.message)
+                }
+            ]]></script>
+        </actions>
+    </service>
+</services>

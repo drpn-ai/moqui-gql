@@ -3,6 +3,14 @@
           name="graphql" displayName="GraphQL API" version="1.0.0" description="Curated read-only GraphQL over the OMS data model.">
     <!-- POST /rest/s1/graphql   body: { query, variables, operationName }  (requires authentication) -->
     <method type="post"><service name="gql.QueryServices.execute#Query"/></method>
+    <!-- POST /rest/s1/graphql/public  body: { query, variables, operationName }  — PUBLIC API-KEY realm.
+         SEPARATE path + separate auth realm from /rest/s1/graphql. require-authentication="anonymous-all"
+         so the framework does not force a session; the service itself enforces API-key-only auth (reads
+         Authorization: Bearer <key> or X-Darpan-Gql-Key) and rejects fail-closed when no/invalid key. A
+         request with only a Moqui session and no API key is rejected by the service. -->
+    <resource name="public" require-authentication="anonymous-all">
+        <method type="post"><service name="gql.QueryServices.execute#PublicQuery"/></method>
+    </resource>
     <!-- GET /rest/s1/graphql/sdl  -> published SDL (public, for tooling/introspection) -->
     <resource name="sdl" require-authentication="anonymous-all">
         <method type="get"><service name="gql.QueryServices.get#Sdl"/></method>

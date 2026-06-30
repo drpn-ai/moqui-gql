@@ -91,11 +91,34 @@ class GqlEngine {
         return out
     }
 
+    /** Internal/session path (unchanged contract): resolves the caller from the session (ec.user) and
+     *  scopes reads to the active tenant via the session DarpanTenantScopeFilter. */
     Map execute(String query, Map variables, String operationName) {
+        return execute(query, variables, operationName, (Map) null)
+    }
+
+    /**
+     * Execute a query. When {@code authOverride} is null/empty this is the SESSION path and behaves
+     * exactly as before (caller profile from ec.user, tenant scope from the session). When
+     * {@code authOverride} carries a non-blank {@code scopeTenantId} this is the PUBLIC API-key realm:
+     *  - tenant scope is PINNED to that tenant via {@code DarpanTenantScopeFilter(scopeTenantId)} — the
+     *    session/TenantAccessSupport path is NEVER consulted (so a logged-in user's tenant can't leak in);
+     *  - the cost profile is looked up by {@code authOverride.profileId} (not ec.user);
+     *  - the query-log caller is {@code authOverride.callerId} (the apiKeyId).
+     * authOverride keys: [scopeTenantId, profileId, callerId] (all optional). Fail-closed: a public
+     * request with a blank scopeTenantId gets the deny filter (zero rows), never the session fallback.
+     */
+    Map execute(String query, Map variables, String operationName, Map authOverride) {
         long startMs = System.currentTimeMillis()
+        boolean publicRealm = authOverride != null &&
+                authOverride.get("scopeTenantId") != null &&
+                !((String) authOverride.get("scopeTenantId")).trim().isEmpty()
+        String overrideTenantId = publicRealm ? (String) authOverride.get("scopeTenantId") : null
+        String overrideCallerId = (authOverride != null) ? (String) authOverride.get("callerId") : null
         // phase-2 caller policy: a profile overrides governor/throttle limits + may activate a row scope
         Map<String, Integer> effectiveCfg = govCfg
-        Map profile = resolveCallerProfile()
+        // PUBLIC realm: profile is keyed by the API key's profileId (never ec.user). SESSION: by ec.user.
+        Map profile = publicRealm ? resolveProfileById((String) authOverride.get("profileId")) : resolveCallerProfile()
         String scopeStore = null
         if (profile != null) {
             effectiveCfg = new LinkedHashMap<String, Integer>(govCfg)
@@ -109,7 +132,12 @@ class GqlEngine {
             // Darpan fork: tenant row-scope is MANDATORY (shared-DB multi-tenancy). Default EVERY request to
             // the fail-closed DarpanTenantScopeFilter so reads can never span tenants; a caller profile's
             // productStore scope (OMS heritage) still overrides when explicitly set.
-            if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
+            if (publicRealm) {
+                // PUBLIC API-key realm: tenant is PINNED to the key's tenant; the session path is never
+                // used. A productStore profile scope still narrows further when set (rare for public keys).
+                if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
+                else { ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter(overrideTenantId)) }
+            } else if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
             else { ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter()) }
             scoped = true
             List<NestedEdgeMeta> metas = nestedEdgeMetas()
@@ -138,7 +166,8 @@ class GqlEngine {
                     [maximumAvailable: td.maximumAvailable, currentlyAvailable: (long) td.currentlyAvailable, restoreRate: td.restoreRate] :
                     [maximumAvailable: effectiveCfg.bucketSize, currentlyAvailable: effectiveCfg.bucketSize, restoreRate: effectiveCfg.restoreRate]
             Map extensions = [cost: [requestedQueryCost: cost, actualQueryCost: cost, throttleStatus: throttle]]
-            logQuery(query, (String) (profile?.profileId ?: "default"), cost, rows, durationMs, errors)
+            // PUBLIC realm: attribute the log row to the API key (apiKeyId), not the anonymous web user.
+            logQuery(query, (String) (profile?.profileId ?: "default"), cost, rows, durationMs, errors, overrideCallerId)
             return [data: data, errors: errors, extensions: extensions]
         } finally {
             if (scoped) ScopeFilters.reset()
@@ -160,6 +189,19 @@ class GqlEngine {
         }
     }
 
+    /** PUBLIC realm: resolve a cost/governor profile directly by profileId (from the API key), bypassing
+     *  the userId -> member -> profile chain. Null/blank profileId = global default. Defensive: any lookup
+     *  failure falls back to global config, never failing the request (matches resolveCallerProfile). */
+    private Map resolveProfileById(String profileId) {
+        try {
+            if (profileId == null || profileId.trim().isEmpty()) return null
+            def p = ec.entity.find("moqui.gql.GqlCallerProfile").condition("profileId", profileId).disableAuthz().one()
+            return p?.getMap()
+        } catch (Throwable t) {
+            ec.logger.warn("gql: api-key profile lookup failed: " + t.message); return null
+        }
+    }
+
     /** Best-effort row count from the result tree: each Map element of any list (edges/plain lists). */
     private int countRows(Object o) {
         if (!(o instanceof Map)) return 0
@@ -175,7 +217,7 @@ class GqlEngine {
      *  shape (QueryStats: avg + 2.6 sigma after warm-up, over slowMinMillis); plus a random sample.
      *  Every ALLOWED hit feeds the per-shape stats; aged bins persist to GqlQueryStatsBin. All writes
      *  in one separate transaction — a log failure never fails the user's request. */
-    private void logQuery(String query, String profileId, long cost, int rows, long durationMs, List errors) {
+    private void logQuery(String query, String profileId, long cost, int rows, long durationMs, List errors, String callerId = null) {
         try {
             boolean rejected = !errors.isEmpty()
             String queryHash = sha256Hex(query)
@@ -217,7 +259,7 @@ class GqlEngine {
                             .setSequencedIdPrimary().create()
                 if (doWriteRow)
                     ec.entity.makeValue("moqui.gql.GqlQueryLog").setAll([
-                            queryDate: ec.user.nowTimestamp, userId: ec.user.userId,
+                            queryDate: ec.user.nowTimestamp, userId: (callerId ?: ec.user.userId),
                             callerProfile: profileId, verdict: rejected ? "REJECTED" : "ALLOWED",
                             rejectReason: rejectReason, estimatedCost: cost, rowsFetched: rows,
                             durationMs: durationMs, queryHash: queryHash, slowHit: slow ? "Y" : "N",

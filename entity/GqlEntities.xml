@@ -80,6 +80,31 @@
         <relationship type="one" related="moqui.gql.GqlCallerProfile"><key-map field-name="profileId"/></relationship>
     </entity>
 
+    <!-- Per-client API key for the PUBLIC GraphQL tier (separate auth realm from the internal /graphql
+         session endpoint). SECURITY-CRITICAL: the raw key is NEVER stored — only its SHA-256 hex digest
+         (keyHash). Resolution looks the key up BY HASH (no raw compare, no substring/like match), which
+         also avoids timing leaks on the raw key. Each key is bound to exactly one tenant
+         (companyUserGroupId) and an optional cost profile; the public endpoint scopes every read to that
+         fixed tenant (DarpanTenantScopeFilter(companyUserGroupId)), never the session/TenantAccessSupport
+         path. use="configuration" so it lives with the runtime config DB like the other gql control
+         entities. -->
+    <entity entity-name="GqlApiKey" package="moqui.gql" use="configuration">
+        <description>A per-client API key for the public GraphQL tier. keyHash = SHA-256 hex of the full
+            raw key (the raw key is shown once at mint time and is NOT recoverable). Bound to one tenant
+            (companyUserGroupId) and an optional GqlCallerProfile.</description>
+        <field name="apiKeyId" type="id" is-pk="true"/>
+        <field name="keyHash" type="text-medium"><description>SHA-256 hex digest of the full raw key. The raw key is never stored.</description></field>
+        <field name="companyUserGroupId" type="id"><description>The single tenant this key is scoped to (required). Every public read is fixed to this tenant.</description></field>
+        <field name="profileId" type="id"><description>Optional cost/governor profile (GqlCallerProfile). Null = global defaults.</description></field>
+        <field name="clientName" type="text-medium"><description>Human-readable client identity for audit/identification.</description></field>
+        <field name="enabled" type="text-indicator"><default>Y</default></field>
+        <field name="expireDate" type="date-time"><description>Optional expiry; once passed the key resolves invalid (fail-closed).</description></field>
+        <field name="lastUsedDate" type="date-time"><description>Best-effort last successful resolution timestamp.</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one" related="moqui.gql.GqlCallerProfile"><key-map field-name="profileId"/></relationship>
+        <index name="GQL_APIKEY_HASH" unique="true"><index-field name="keyHash"/></index>
+    </entity>
+
     <!-- The BILL_TO customer of an order, as leaf columns (orderId 1:1 -> Person name). Backs the
          Order.billToCustomer has-one edge so clients read firstName/lastName and compose the display
          name themselves — replacing the get#OrderCustomerName service-backed field (leaf-over-service). -->

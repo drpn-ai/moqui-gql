@@ -4,7 +4,7 @@ import org.junit.platform.suite.api.Suite
 import org.moqui.Moqui
 
 @Suite
-@SelectClasses([ ScaffoldSmokeTests.class, SchemaArtifactParserTests.class,
+@SelectClasses([ ScaffoldSmokeTests.class, SchemaArtifactParserTests.class, ApiKeyAuthTests.class,
         SearchQueryParserTests.class, CostModelTests.class, GqlScalarsTests.class, IndexClassifierTests.class,
         GqlSchemaBuilderTests.class, GqlToolFactoryTests.class, GqlEngineTests.class, PartyConnectionTests.class,
         ExternalIdTests.class, ServiceBackedLoaderTests.class, ShipmentRootTests.class, InventoryLevelsTests.class,
