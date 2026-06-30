@@ -110,9 +110,10 @@ class GqlEngine {
      */
     Map execute(String query, Map variables, String operationName, Map authOverride) {
         long startMs = System.currentTimeMillis()
-        boolean publicRealm = authOverride != null &&
-                authOverride.get("scopeTenantId") != null &&
-                !((String) authOverride.get("scopeTenantId")).trim().isEmpty()
+        // PUBLIC realm = any request routed via the public API-key path (authOverride present), INDEPENDENT
+        // of whether scopeTenantId is blank. A public request with a blank/missing tenant must hit the
+        // fail-CLOSED fixed-tenant filter (deny, zero rows), NEVER fall back to the session path.
+        boolean publicRealm = authOverride != null
         String overrideTenantId = publicRealm ? (String) authOverride.get("scopeTenantId") : null
         String overrideCallerId = (authOverride != null) ? (String) authOverride.get("callerId") : null
         // phase-2 caller policy: a profile overrides governor/throttle limits + may activate a row scope
@@ -133,10 +134,12 @@ class GqlEngine {
             // the fail-closed DarpanTenantScopeFilter so reads can never span tenants; a caller profile's
             // productStore scope (OMS heritage) still overrides when explicitly set.
             if (publicRealm) {
-                // PUBLIC API-key realm: tenant is PINNED to the key's tenant; the session path is never
-                // used. A productStore profile scope still narrows further when set (rare for public keys).
-                if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
-                else { ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter(overrideTenantId)) }
+                // PUBLIC API-key realm: the tenant pin is MANDATORY and UNCONDITIONAL — always the
+                // fixed-tenant filter from the key's tenant (a blank overrideTenantId denies = zero rows).
+                // Never the session path, and never a productStore scope alone: productStore is OMS heritage
+                // and ProductStoreScopeFilter leaves entities lacking a productStoreId column UNSCOPED, which
+                // on the public path is a cross-tenant read. So scopeStore is deliberately ignored here.
+                ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter(overrideTenantId))
             } else if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
             else { ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter()) }
             scoped = true

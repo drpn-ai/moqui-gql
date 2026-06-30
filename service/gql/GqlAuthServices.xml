@@ -24,6 +24,12 @@
         </out-parameters>
         <actions>
             <script><![CDATA[
+                // SECURITY (admin gate): minting a public API key for ANY tenant is super-admin-only.
+                // Without this any authenticated user could self-serve a cross-tenant public key. Fail-closed.
+                if (!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)) {
+                    ec.message.addError("Minting a public GraphQL API key requires super-admin.")
+                    return
+                }
                 // 256 bits of entropy from SecureRandom, URL-safe base64 (no padding), prefixed "dgql_".
                 String rawKey = org.moqui.gql.auth.ApiKeyHasher.generateRawKey()
                 // Store ONLY the hash. NEVER persist or log rawKey.
