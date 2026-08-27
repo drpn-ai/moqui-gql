@@ -104,7 +104,7 @@
         </actions>
     </service>
 
-    <service verb="purge" noun="QueryLog" authenticate="true">
+    <service verb="purge" noun="QueryLog" authenticate="anonymous-all" allow-remote="false">
         <description>Retention purge for query-log v2: deletes GqlQueryLog raw rows older than
             retainDays and GqlQueryStatsBin rows whose binStartDate is older than binRetainDays
             (defaults from the gql.queryLog.retainDays / gql.queryLog.binRetainDays properties).
