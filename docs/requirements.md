@@ -1,5 +1,8 @@
 # GraphQL API Requirements — Derived from the Existing Maarg Surface
 
+> **Darpan fork:** Upstream requirements for the Maarg OMS, kept as a design reference. The OMS schema (`OmsSchema.gql.xml`) is not in this fork; the built schema
+> is `graphql/DarpanSchema.gql.xml`. See [`STATUS.md`](STATUS.md).
+
 **Date:** 2026-06-03
 **Purpose:** Reverse-engineer the requirements for the new GraphQL read API from what Maarg
 already exposes. What consumers already pull (published REST, remote services, data feeds,

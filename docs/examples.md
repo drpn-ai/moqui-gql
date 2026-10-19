@@ -1,8 +1,11 @@
 # moqui-gql — Capability Examples & Test-Case Catalog
 
+> **Darpan fork:** Upstream OMS capability catalog, kept as a design reference. The OMS schema (`OmsSchema.gql.xml`) is not in this fork; the built schema
+> is `graphql/DarpanSchema.gql.xml`. See [`STATUS.md`](STATUS.md).
+
 > **⚠️ Design capability catalog — not all of it is built.** This document is the design contract and
 > test-case catalog: it enumerates *intended* capability across all OMS domains. The **shipped**
-> read-only surface is the subset defined by [`../graphql/OmsSchema.gql.xml`](../graphql/OmsSchema.gql.xml)
+> read-only surface is the subset defined by `graphql/OmsSchema.gql.xml` (upstream; deleted in this fork)
 > (authoritative) and summarized in [`STATUS.md`](STATUS.md). Sections for picklists, transfer/purchase
 > orders, cycle counts, routing, and BOPIS/ATP convenience roots — and fields like `fulfillmentStatus`,
 > `orderCount`, `customerPartyId` — describe intended capability that is **not yet implemented**.

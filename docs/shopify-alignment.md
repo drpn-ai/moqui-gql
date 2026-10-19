@@ -1,5 +1,8 @@
 # GraphQL Spec & Shopify Admin Alignment
 
+> **Darpan fork:** The query-language alignment (search syntax, connections, cost envelope) still holds for the engine; the OMS field names do not apply here. The OMS schema (`OmsSchema.gql.xml`) is not in this fork; the built schema
+> is `graphql/DarpanSchema.gql.xml`. See [`STATUS.md`](STATUS.md).
+
 **Goal:** make moqui-gql's schema and query language **as close to Shopify Admin GraphQL as
 possible**, and conformant with the GraphQL spec.
 **Method:** validated against live `shopify.dev` Admin API docs (2026-06). Full schema

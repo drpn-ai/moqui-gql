@@ -110,11 +110,13 @@ Two things to note:
 ### 3.4 Per-caller keying
 
 ```groovy
-String callerKey = ec.user?.userId ?: "anonymous"
-ThrottleGate.check(ec, callerKey, cost, bucketSize, restoreRate, willExecute)
+String effectiveCallerKey = (this.callerKey != null && !this.callerKey.isEmpty()) ? this.callerKey : (ec.user?.userId ?: "anonymous")
+ThrottleGate.check(ec, effectiveCallerKey, cost, bucketSize, restoreRate, willExecute)
 ```
 
-The bucket is keyed by Moqui `userId` (all unauthenticated traffic shares the `"anonymous"` bucket).
+The engine passes the caller key into `GovernorInstrumentation`: the `apiKeyId` on the public API-key
+path (`/rest/s1/graphql/public`), the Moqui `userId` on the session path. Each API key therefore has
+its own bucket; only a request with neither falls back to the shared `"anonymous"` bucket.
 Buckets live **by reference** in the Moqui cache `gql.throttle.bucket` so they persist across
 requests; get-or-create and `decide` are `synchronized` so concurrent requests from the same caller
 debit the same bucket safely.
@@ -205,8 +207,8 @@ These two are **code defaults** read via system property by `GqlEngine` (not cur
 maximum-cost query and must then wait for refill. **1000 capacity / 50 per second** mirrors Shopify's
 **Standard** plan, which is why the example envelopes match Shopify's so closely.
 
-**Per-caller overrides.** A `GqlCallerProfile` (resolved from the caller's `userId` via
-`GqlCallerProfileMember`) can override the bucket per caller — `bucketSize` and `restoreRate`, along
+**Per-caller overrides.** A `GqlCallerProfile` (on the session path resolved from the caller's
+`userId` via `GqlCallerProfileMember`; on the public path taken from the API key's `profileId`) can override the bucket per caller — `bucketSize` and `restoreRate`, along
 with `maxCost` and `maxFirst`. A trusted internal app can be given a large, fast
 bucket; an external partner a small, slow one. Profile lookup is defensive: any failure falls back to
 the global defaults and never fails the request.
@@ -279,8 +281,10 @@ There is no `Retry-After` header yet — the throttle speaks through the cost bl
   move buckets to a shared store for cluster-wide fairness.
 - **We debit the estimate, never refund.** Unlike Shopify we do not re-measure `actualQueryCost` after
   execution, so the debit is the (conservative) upper-bound estimate. Callers are never *under*-charged.
-- **Anonymous traffic shares one bucket.** All unauthenticated requests key to `"anonymous"`; give
-  real callers identities (and profiles) for independent budgets.
+- **Anonymous traffic shares one bucket.** Only requests with no API key and no session user key to
+  `"anonymous"`; public API-key requests get a bucket per key.
+- **Sustained abuse is a separate check.** The bucket is per request; `scan#QueryAnomalies` looks back
+  over a 15-minute window and raises `GqlAnomalyAlert` rows (see [`STATUS.md`](STATUS.md)).
 - **Buckets are in-memory.** A server restart resets every caller to a full bucket — lenient by
   design (it can never wrongly lock someone out), and acceptable for a per-node rate limit.
 

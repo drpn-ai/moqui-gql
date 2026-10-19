@@ -1,5 +1,8 @@
 # Query Cost Model
 
+> **Darpan fork:** The formula and gates below are current engine behaviour. The worked examples were measured against the upstream OMS schema and database (`hcsd_notnaked`). The OMS schema (`OmsSchema.gql.xml`) is not in this fork; the built schema
+> is `graphql/DarpanSchema.gql.xml`. See [`STATUS.md`](STATUS.md).
+
 How `moqui-gql` estimates the cost of a GraphQL query, why the formula is shaped the way it is, and
 three worked examples whose numbers are taken from the running engine.
 
@@ -250,7 +253,7 @@ replenishing budget (throttle).
   does not re-measure actual rows after execution (`actualQueryCost == requestedQueryCost`); a future
   phase can debit the bucket by measured cost instead.
 - **Service cost is a flat proxy.** `serviceFixedCost` says "not cheap", not "exactly this expensive".
-  The real bound on a service-backed field is the runtime guard set (`queryTimeout`, per-level row
+  The real bound on a service-backed field is the runtime guard set (transaction timeout, per-level row
   caps, wall-clock deadline) plus the batch-key cap — cost just keeps it out of the "free" bucket.
 - **Saturation hides true magnitude past the ceiling.** Above `COST_CEILING` (100M) the reported number
   is clamped; the query is rejected anyway, so the exact astronomical value is not interesting.

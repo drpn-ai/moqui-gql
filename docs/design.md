@@ -1,8 +1,34 @@
 # Maarg GraphQL Query Layer with Cost Governance — Design
 
 **Date:** 2026-06-03
-**Status:** Phases 1, 1.5, 2 & 3 shipped (core engine; Order/Product/Facility roots; live per-caller throttle + caller profiles; prepared-statement document cache). Only pending item: framework PR #45 (EntityFind.queryTimeout). This doc is the architecture record; the "— phase N" roadmap annotations below are historical.
+**Status:** Upstream architecture record (HotWax, written for the Maarg OMS). The engine it describes
+is what this fork runs, but the OMS schema it designs against (`OmsSchema.gql.xml`) was deleted in the
+Darpan fork. The "— phase N" roadmap annotations below are historical. For the current state see
+[`STATUS.md`](STATUS.md).
 **Author:** Anil K Patel (with Claude)
+
+## Darpan fork — what differs from this design
+
+Read the rest of this document with these changes in mind:
+
+- **Schema.** The built schema is `graphql/DarpanSchema.gql.xml` (one type, `ReconciliationResult`,
+  over `darpan.reconciliation.ReconciliationRunResult`). OMS types, edges, view-entities and examples
+  in this document describe the upstream design, not this fork.
+- **Authorization (replaces decision 11).** Darpan is one shared database partitioned by
+  `companyUserGroupId`, so query-level tenant scoping is mandatory. Every find goes through
+  `DarpanTenantScopeFilter`: the session path scopes to the caller's active tenant, the public path to
+  the API key's tenant, and no tenant means zero rows. An entity without `companyUserGroupId` fails the
+  read rather than returning unscoped rows, so such entities must sit behind a scoped parent edge.
+- **Public realm.** `POST /rest/s1/graphql/public` accepts API keys only (`GqlApiKey`, minted by a
+  super-admin, stored as a SHA-256 digest). The key fixes the tenant and the cost profile, and keys the
+  throttle bucket and query log by `apiKeyId`.
+- **Timeouts (replaces the `EntityFind.queryTimeout` plan).** The framework PR was tabled and the
+  dependency removed (#62). There is no per-statement timeout. Protection is the wall-clock budget
+  (checked before each field fetch), the per-level row cap, and the request transaction timeout.
+- **Load isolation (decision 9).** Reads request the clone datasource (`gql.useClone`); no dedicated
+  GraphQL pool or replica is configured for Darpan.
+- **Monitoring.** A scheduled anomaly scan (`scan#QueryAnomalies`) and a nightly purge
+  (`purge#QueryLog`) sit on top of query-log v2.
 
 ## Problem
 
@@ -241,9 +267,9 @@ retry-loop signal from the rejected raw rows; (3) slow-query debugging from the 
 
 - A **new component `moqui-gql`** (this repo): endpoint, schema registry, analyzer,
   executor, policy, observability.
-- A **small, upstream-able framework addition**: `EntityFind.queryTimeout(seconds)`
-  wired to `PreparedStatement.setQueryTimeout()`. Runtime enforcement is
-  impossible without it. (Possibly also wire a hard row-cap abort.)
+- ~~A small, upstream-able framework addition: `EntityFind.queryTimeout(seconds)`~~
+  — tabled; the dependency was removed in #62. Runtime enforcement is the wall-clock budget, the
+  per-level row cap and the transaction timeout.
 - A **dedicated read-only datasource** (separate connection pool, read replica) for
   GraphQL execution — see Load isolation (decision 9).
 
@@ -357,8 +383,8 @@ Cautionary note from the connector: it *reads* `currentlyAvailable` and does not
 - **Load isolation (from review Issue 1):**
   - **CRITICAL [→E2E]:** an expensive/runaway query exhausts only the GraphQL pool;
     the OMS pool is unaffected under concurrent load.
-- **Runtime guards:** `queryTimeout` aborts a slow query (also tests the framework
-  patch); row cap aborts mid-fetch; wall-clock budget aborts a deep request.
+- **Runtime guards:** row cap aborts mid-fetch; wall-clock budget aborts a deep request.
+  (The planned per-statement `queryTimeout` test was dropped with the framework patch, #62.)
 - **Computed/service-backed fields (decision 12):** a service-backed field returns its
   service's computed value (e.g. `itemFulfillmentStatus`); it carries a high fixed cost
   in the estimate; inside a list it batches (one service call per level) rather than N
@@ -450,7 +476,7 @@ are our OMS data model** — consumers see Maarg's model, not Shopify's.
 | Depth / complexity limiting | `graphql-java` `Max*Instrumentation` | Reuse; inject our cost model via `FieldComplexityCalculator`. |
 | Per-level batching | `graphql-java` `DataLoader` | Reuse (synchronous dispatch). |
 | Phase-2 allow-listed queries | `graphql-java` `PersistedQuerySupport` | Reuse. |
-| Query timeout | none in Moqui today | Add `EntityFind.queryTimeout()` (framework patch). |
+| Query timeout | none in Moqui today | Planned framework patch was tabled (#62); no per-statement timeout. |
 | Connection-pool isolation | Moqui multi-datasource config | Add dedicated read-replica datasource. |
 | Order relationship edges | `oms/entity/OrderExtendedEntities.xml` (roles, shipGroups, payments, adjustments, statuses, items, returns…) | Reuse as the declared edge set. |
 | Joined/flattened order data | view-entities (`OrderItemDetail`, `ReturnItemView`, …) | Back GraphQL view-entity types with these (decision 12). |
@@ -499,6 +525,10 @@ out of scope (federation).
 
 ## Schema-contract maintenance (built ⊆ contract, test-enforced)
 
+> **Darpan fork:** this section describes the upstream OMS setup. `OmsSchema.gql.xml` is deleted;
+> the built schema is `DarpanSchema.gql.xml`, and `docs/schema.graphql` has not been updated to it,
+> so `SchemaContractTests` no longer describes this fork.
+
 `docs/schema.graphql` is the SDL **contract** and is allowed to be a **superset** — it documents
 designed-but-unbuilt surface (decision surface). `graphql/OmsSchema.gql.xml` is what is actually
 **built**. `SchemaContractTests` (Spock, in the suite) enforces **built ⊆ contract**: every type,
@@ -514,6 +544,8 @@ executable form of the contract-first decision (epic #46 decision 3): features #
 update both sides together, and this test guarantees they do.
 
 ## Data-model conventions (OMS) — enshrined for future modeling
+
+> **Darpan fork:** upstream OMS conventions, kept for reference. They do not apply to the Darpan schema.
 
 The graph maps to the HotWax/OFBiz OMS model. These conventions are load-bearing for the edges and
 views above; future schema work must follow them (they also live in the project `CLAUDE.md`):
