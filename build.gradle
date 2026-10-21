@@ -100,3 +100,16 @@ test {
     classpath += files(projectDir.absolutePath)
     classpath = classpath.filter { it.exists() }
 }
+
+// DAR-DOCS-003: print the SDL /sdl serves, offline, for the docs site's generated GraphQL reference.
+//   ./gradlew :runtime:component:moqui-gql:printSdl -PsdlOut=/abs/path/schema.graphql
+task printSdl(type: JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'org.moqui.gql.tools.PrintSdl'
+    doFirst {
+        String out = project.findProperty('sdlOut') ?: "${buildDir}/schema.graphql"
+        List<String> files = fileTree("${projectDir}/graphql").matching { include '*.gql.xml' }.files*.absolutePath.sort()
+        args([out] + files)
+    }
+}

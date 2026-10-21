@@ -110,7 +110,7 @@ class GqlSchemaBuilder {
                     if (sortEnum == null) {
                         GraphQLEnumType.Builder eb = GraphQLEnumType.newEnum().name(enumName)
                                 .description("The orders a " + q.name + " list can be sorted in; reverse: true flips it.")
-                        for (String v in q.sortKeys.keySet()) eb.value(v)
+                        q.sortKeys.each { String v, String field -> eb.value(v, v, "Sort by " + field + ".") }
                         sortEnum = eb.build(); enums.put(enumName, sortEnum); additional.add(sortEnum)
                     }
                 }
@@ -118,14 +118,14 @@ class GqlSchemaBuilder {
             } else if (q.byIdentification) {
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
                         .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType)).description(q.description)
-                if (q.identTypeArg) fb.argument(arg(q.identTypeArg, Scalars.GraphQLString))
-                if (q.identValueArg) fb.argument(arg(q.identValueArg, Scalars.GraphQLString))
+                if (q.identTypeArg) fb.argument(arg(q.identTypeArg, Scalars.GraphQLString, "The kind of identification to match."))
+                if (q.identValueArg) fb.argument(arg(q.identValueArg, Scalars.GraphQLString, "The identification value to match."))
                 qb.field(fb.build())
             } else {
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
                         .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType)).description(q.description)
-                if (q.pkArg) fb.argument(arg(q.pkArg, Scalars.GraphQLID))
-                if (q.externalId) fb.argument(arg("externalId", Scalars.GraphQLString))
+                if (q.pkArg) fb.argument(arg(q.pkArg, Scalars.GraphQLID, "The id of the " + q.targetType + " to return."))
+                if (q.externalId) fb.argument(arg("externalId", Scalars.GraphQLString, "The external id of the " + q.targetType + " to return."))
                 qb.field(fb.build())
             }
         }
