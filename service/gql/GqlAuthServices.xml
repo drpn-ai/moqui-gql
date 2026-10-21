@@ -92,6 +92,10 @@
                 profileId = row.profileId
                 apiKeyId = row.apiKeyId
                 clientName = row.clientName
+                // DAR-BE-100: at most once a minute per key. Every request writing the row in its own transaction
+                // is a write per read and a row lock on a hot key; "last used" needs minutes, not milliseconds.
+                java.sql.Timestamp lastUsed = (java.sql.Timestamp) row.lastUsedDate
+                if (lastUsed != null && now.time - lastUsed.time < 60000L) return
                 // Best-effort lastUsedDate update — must never fail/abort the resolution. Own transaction
                 // so it can't be poisoned by the read-only query transaction.
                 try {
@@ -103,6 +107,97 @@
                     ec.logger.warn("gql: api-key lastUsedDate update failed for apiKeyId=${row.apiKeyId}: " + t.message)
                 }
             ]]></script>
+        </actions>
+    </service>
+
+    <!-- DAR-BE-100. Managing agent keys. Every key is read-only: the public tier has no mutations, so there is no scope
+         to choose. Like create#ApiKey, each service is super-admin only and gates itself (the RPC fence lets gql.*
+         through for that reason), and none ever returns or logs a key's digest. -->
+
+    <service verb="list" noun="ApiKeys" authenticate="true" allow-remote="true">
+        <description>The public GraphQL API keys, newest first: id, label (clientName), tenant, profile, whether enabled,
+            created, expires and last used (to the minute). Never the key or its digest. Super-admin only.</description>
+        <in-parameters>
+            <parameter name="companyUserGroupId"><description>Only this tenant's keys; blank is every tenant.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="apiKeys" type="List"><description>One Map per key; see the service description.</description></parameter>
+        </out-parameters>
+        <actions>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
+                <return error="true" message="Listing public GraphQL API keys requires super-admin."/></if>
+            <entity-find entity-name="moqui.gql.GqlApiKey" list="keyList" use-cache="false">
+                <econdition field-name="companyUserGroupId" ignore-if-empty="true"/>
+                <select-field field-name="apiKeyId,clientName,companyUserGroupId,profileId,enabled,expireDate,lastUsedDate,createdDate"/>
+                <order-by field-name="-createdDate"/>
+            </entity-find>
+            <set field="nowStamp" from="ec.user.nowTimestamp"/>
+            <set field="apiKeys" from="[]"/>
+            <iterate list="keyList" entry="key">
+                <script>apiKeys.add([apiKeyId: key.apiKeyId, clientName: key.clientName, companyUserGroupId: key.companyUserGroupId,
+                        profileId: key.profileId, enabled: key.enabled == 'Y', createdDate: key.createdDate,
+                        expireDate: key.expireDate, lastUsedDate: key.lastUsedDate,
+                        active: key.enabled == 'Y' &amp;&amp; (key.expireDate == null || key.expireDate.after(nowStamp))])</script>
+            </iterate>
+        </actions>
+    </service>
+
+    <service verb="disable" noun="ApiKey" authenticate="true" allow-remote="true">
+        <description>Turn a key off now: every request with it fails as an invalid API key from the next request on.
+            Idempotent. Super-admin only.</description>
+        <in-parameters><parameter name="apiKeyId" required="true"/></in-parameters>
+        <actions>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
+                <return error="true" message="Disabling a public GraphQL API key requires super-admin."/></if>
+            <entity-find-one entity-name="moqui.gql.GqlApiKey" value-field="key" for-update="true"/>
+            <if condition="key == null"><return error="true" message="API key ${apiKeyId} was not found"/></if>
+            <set field="key.enabled" value="N"/>
+            <entity-update value-field="key"/>
+            <log level="info" message="gql: disabled API key apiKeyId=${apiKeyId} client='${key.clientName}' tenant=${key.companyUserGroupId}"/>
+        </actions>
+    </service>
+
+    <service verb="rotate" noun="ApiKey" authenticate="true" allow-remote="true">
+        <description>Replace a key without an outage: mints a new key for the same tenant, profile and label, returns
+            the RAW new key exactly once, and gives the old key a short expiry so the agent can switch over. Only an
+            enabled, unexpired key can be rotated; a leaked key should be disabled instead. Super-admin only.</description>
+        <in-parameters>
+            <parameter name="apiKeyId" required="true"><description>The key to replace.</description></parameter>
+            <parameter name="graceMinutes" type="Integer" default-value="60">
+                <description>How long the old key keeps working, 0 to 1440 minutes; 0 ends it now.</description></parameter>
+            <parameter name="expireDate" type="Timestamp">
+                <description>The new key's expiry; blank keeps the old key's expiry, if it has one.</description></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="apiKey"><description>The RAW new key, shown ONCE and not recoverable.</description></parameter>
+            <parameter name="newApiKeyId"/>
+            <parameter name="oldKeyExpireDate" type="Timestamp"><description>When the old key stops working.</description></parameter>
+        </out-parameters>
+        <actions>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
+                <return error="true" message="Rotating a public GraphQL API key requires super-admin."/></if>
+            <if condition="graceMinutes == null || graceMinutes &lt; 0 || graceMinutes &gt; 1440">
+                <return error="true" message="graceMinutes must be between 0 and 1440"/></if>
+            <entity-find-one entity-name="moqui.gql.GqlApiKey" value-field="oldKey" for-update="true"/>
+            <if condition="oldKey == null"><return error="true" message="API key ${apiKeyId} was not found"/></if>
+            <set field="nowStamp" from="ec.user.nowTimestamp"/>
+            <if condition="oldKey.enabled != 'Y' || (oldKey.expireDate != null &amp;&amp; !oldKey.expireDate.after(nowStamp))">
+                <return error="true" message="API key ${apiKeyId} is disabled or expired; mint a new key instead"/></if>
+
+            <set field="apiKey" from="org.moqui.gql.auth.ApiKeyHasher.generateRawKey()"/>
+            <set field="newApiKeyId" from="ec.entity.sequencedIdPrimary('moqui.gql.GqlApiKey', null, null)"/>
+            <entity-make-value entity-name="moqui.gql.GqlApiKey" value-field="newKey"
+                    map="[apiKeyId:newApiKeyId, keyHash:org.moqui.gql.auth.ApiKeyHasher.sha256Hex(apiKey),
+                          companyUserGroupId:oldKey.companyUserGroupId, profileId:oldKey.profileId, clientName:oldKey.clientName,
+                          enabled:'Y', expireDate:(expireDate ?: oldKey.expireDate), createdDate:nowStamp]"/>
+            <entity-create value-field="newKey"/>
+
+            <set field="graceEnd" from="new java.sql.Timestamp(nowStamp.time + graceMinutes * 60000L)"/>
+            <set field="oldKey.expireDate" from="oldKey.expireDate != null &amp;&amp; oldKey.expireDate.before(graceEnd) ? oldKey.expireDate : graceEnd"/>
+            <entity-update value-field="oldKey"/>
+            <set field="oldKeyExpireDate" from="oldKey.expireDate"/>
+            <!-- Identity only: never the raw key or a digest. -->
+            <log level="info" message="gql: rotated API key apiKeyId=${apiKeyId} -> ${newApiKeyId} client='${oldKey.clientName}' tenant=${oldKey.companyUserGroupId}; old key ends ${oldKeyExpireDate}"/>
         </actions>
     </service>
 </services>
