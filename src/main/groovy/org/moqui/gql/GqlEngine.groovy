@@ -293,6 +293,7 @@ class GqlEngine {
             def parentEd = efi.getEntityDefinition(t.entityName)
             if (parentEd == null) continue
             for (GqlEdge e in t.edges.values()) {
+                if (e.isEmbedded()) continue   // read from the parent map, no loader
                 if (e.single) {   // single-object (has-one) edge: explicit child entity + fk, no relationship
                     out.add(new NestedEdgeMeta(typeName: t.name, edgeName: e.name, loaderName: t.name + "." + e.name,
                             parentKeyField: e.parentKey ?: e.fk, childEntityName: e.childEntity,
@@ -375,6 +376,21 @@ class GqlEngine {
             }
         }
 
+        // embedded edges (DAR-BE-098): the nested map / list of maps already sits in the parent row
+        for (GqlType t in art.types.values()) {
+            for (GqlEdge e in t.edges.values()) {
+                if (!e.isEmbedded()) continue
+                final String key = e.sourceKey ?: e.name
+                final boolean many = e.list
+                code.dataFetcher(FieldCoordinates.coordinates(t.name, e.name),
+                        ({ DataFetchingEnvironment env ->
+                            def s = env.getSource()
+                            def v = (s instanceof Map) ? ((Map) s).get(key) : null
+                            return (many && v == null) ? [] : v
+                        } as DataFetcher))
+            }
+        }
+
         // nested has-many edge fetchers: defer to the per-request DataLoader (batched, no N+1)
         for (NestedEdgeMeta meta in metas) {
             final NestedEdgeMeta m = meta   // capture per-iteration value, not the loop variable
@@ -407,7 +423,21 @@ class GqlEngine {
                             if (rq.serviceName == null) return null
                             Map<String, Object> params = new LinkedHashMap<String, Object>()
                             for (GqlArg a in rq.args) { def v = env.getArgument(a.name); if (v != null) params.put(a.name, v) }
+                            if (rq.tenantParam) {
+                                // DAR-BE-098: the tenant is the request's pinned scope, never an argument. No tenant,
+                                // no call: fail closed exactly as an entity read does.
+                                String tenant = org.moqui.gql.scope.DarpanTenantScopeFilter.tenantOf(ScopeFilters.current(), ec)
+                                if (!tenant) return null
+                                params.put(rq.tenantParam, tenant)
+                            }
                             def result = ec.service.sync().name(rq.serviceName).parameters(params).call()
+                            if (ec.message.hasError()) {
+                                // DAR-BE-098: the service's own message (e.g. "Audit x was not found") becomes a GraphQL
+                                // error, rather than a null the caller cannot tell from "nothing there".
+                                String why = ec.message.errorsString
+                                ec.message.clearErrors()
+                                throw new IllegalStateException(why?.trim())
+                            }
                             return rq.serviceOut ? (result != null ? result.get(rq.serviceOut) : null) : result
                         } as DataFetcher))
             } else if (rq.list) {

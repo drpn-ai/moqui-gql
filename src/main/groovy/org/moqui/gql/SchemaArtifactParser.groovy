@@ -18,6 +18,7 @@ class SchemaArtifactParser {
                             type: fn.attribute("type"),
                             filterable: "true".equals(fn.attribute("filterable")),
                             sortable: "true".equals(fn.attribute("sortable")),
+                            list: "true".equals(fn.attribute("list")),
                             costOverride: asInt(fn.attribute("cost")),
                             resolverService: fn.attribute("resolver-service"),
                             resolverIn: splitList(fn.attribute("resolver-in")),
@@ -32,6 +33,7 @@ class SchemaArtifactParser {
                             name: en.attribute("name"), entityRelationship: en.attribute("entity-relationship"),
                             targetType: en.attribute("target-type"), list: "true".equals(en.attribute("list")),
                             kind: en.attribute("kind") ?: "connection", firstDefault: asInt(en.attribute("first-default")),
+                            sourceKey: en.attribute("source-key"),
                             costOverride: asInt(en.attribute("cost")),
                             resolverService: en.attribute("resolver-service"),
                             resolverIn: splitList(en.attribute("resolver-in")),
@@ -66,10 +68,14 @@ class SchemaArtifactParser {
                 identFkField: qn.attribute("fk-field"),
                 serviceBacked: "true".equals(qn.attribute("service")),
                 serviceName: qn.attribute("service-name"), serviceOut: qn.attribute("service-out"),
-                returnsList: "true".equals(qn.attribute("returns-list")))
+                returnsList: "true".equals(qn.attribute("returns-list")),
+                tenantParam: qn.attribute("tenant-param"))
         for (MNode an in qn.children("arg")) rq.args.add(new GqlArg(
                 name: an.attribute("name"), type: an.attribute("type") ?: "String",
                 required: "true".equals(an.attribute("required"))))
+        // A tenant a caller could name would be a cross-tenant read: refuse the schema rather than serve it.
+        if (rq.tenantParam && rq.args.any { it.name == rq.tenantParam })
+            throw new IllegalArgumentException("root-query ${rq.name}: tenant-param ${rq.tenantParam} may not also be an arg")
         art.rootQueries.put(qn.attribute("name"), rq)
     }
 

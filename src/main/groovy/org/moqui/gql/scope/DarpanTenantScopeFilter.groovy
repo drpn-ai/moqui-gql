@@ -53,6 +53,18 @@ class DarpanTenantScopeFilter implements ScopeFilter {
         this.fixedMode = true
     }
 
+    /**
+     * DAR-BE-098. The tenant this request is pinned to, for a service-backed root's tenant-param; null when there is
+     * none, or when the active filter is not a Darpan tenant filter (fail closed: the service is not called).
+     */
+    static String tenantOf(ScopeFilter filter, ExecutionContext ec) {
+        if (!(filter instanceof DarpanTenantScopeFilter)) return null
+        DarpanTenantScopeFilter f = (DarpanTenantScopeFilter) filter
+        if (f.fixedMode) return f.fixedTenantId
+        String active = TenantAccessSupport.currentActiveTenantUserGroupId(ec)
+        return (active != null && !active.trim().isEmpty()) ? active : null
+    }
+
     @Override
     EntityCondition conditionFor(String entityName, ExecutionContext ec) {
         String value

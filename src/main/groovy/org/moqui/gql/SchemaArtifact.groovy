@@ -8,6 +8,8 @@ import groovy.transform.CompileStatic
 class GqlField {
     String name, entityField, type
     boolean filterable = false, sortable = false
+    /** DAR-BE-098: a list of scalars ([String!]!) read from the parent map, e.g. a report's notCovered ids. */
+    boolean list = false
     Integer costOverride = null
     String resolverService = null
     List<String> resolverIn = []
@@ -28,8 +30,12 @@ class GqlField {
 class GqlEdge {
     String name, entityRelationship, targetType
     boolean list = false
-    /** "connection" (Relay, default) or "list" (plain bounded [Type!]! with a `first` cap). */
+    /** "connection" (Relay, default), "list" (plain bounded [Type!]! with a `first` cap), or "embedded"
+     *  (DAR-BE-098): a nested map, or list of maps, read from the parent row itself. No entity read, so no
+     *  `first` and no fan-out cost; the service that produced the parent already did the work. */
     String kind = "connection"
+    /** Embedded edge: the parent map key to read; defaults to the edge name. */
+    String sourceKey = null
     Integer firstDefault = null
     Integer costOverride = null
     String resolverService = null
@@ -44,8 +50,9 @@ class GqlEdge {
      *  relationship (e.g. "items"); resolved with one extra batched DISTINCT query. Parsed in Task 5. */
     String excludeEmpty = null
     boolean isServiceBacked() { return resolverService != null && !resolverService.isEmpty() }
+    boolean isEmbedded() { return "embedded".equals(kind) }
     boolean isPlainList() { return list && "list".equals(kind) }
-    boolean isConnection() { return list && !"list".equals(kind) }
+    boolean isConnection() { return list && !"list".equals(kind) && !isEmbedded() }
 }
 
 @CompileStatic
@@ -70,6 +77,9 @@ class GqlRootQuery {
     boolean serviceBacked = false
     String serviceName, serviceOut
     boolean returnsList = false
+    /** DAR-BE-098: the service IN parameter that receives the request's pinned tenant (the API key's, or the
+     *  session's active tenant). Never a caller argument; with no tenant the service is not called. */
+    String tenantParam
     List<GqlArg> args = []
     /** search key (our field name) -> allowed comparators (eq, in, gt, gte, lt, lte). */
     Map<String, Set<String>> searchKeys = [:]

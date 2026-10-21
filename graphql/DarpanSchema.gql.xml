@@ -33,4 +33,249 @@
             search-keys="savedRunId:eq,in reconciliationRunId:eq ruleSetId:eq statusEnumId:eq,in"
             sort-keys="CREATED_DATE:createdDate RESULT_ID:reconciliationRunResultId"/>
     </gql-type>
+
+    <!-- ================================================================================================================
+         DAR-BE-098. Audit runs, read-only. The JSON documents (darpan.audit.report/v1, darpan.audit.finding/v1, contract in
+         the wrapper's docs/superpowers/specs/2026-10-21-audit-run-json-contract.md) are primary; these types are their
+         GraphQL shape: a keyed object becomes a list whose elements carry the key (audit.AuditReportServices
+         get#AuditReportGraph / get#AuditFindingGraph). Every nested object is an embedded edge, read from the one service
+         result, so no type here reads an entity. The tenant is the key's: tenant-param, never an argument.
+         Enum-valued fields carry the JSON's code as a String (open / pending / fixed ...). -->
+    <root-query name="auditReport" target-type="AuditReportDocument" service="true"
+            service-name="audit.AuditReportServices.get#AuditReportGraph" service-out="report" tenant-param="companyUserGroupId">
+        <arg name="audit" type="String" required="true"/>
+        <arg name="date" type="String"/>
+        <arg name="period" type="String"/>
+    </root-query>
+    <root-query name="auditFinding" target-type="AuditFindingDocument" service="true"
+            service-name="audit.AuditReportServices.get#AuditFindingGraph" service-out="finding" tenant-param="companyUserGroupId">
+        <arg name="id" type="ID" required="true"/>
+    </root-query>
+
+    <gql-type name="AuditReportDocument">
+        <field name="schema"/>
+        <field name="about"/>
+        <edge name="report" kind="embedded" target-type="AuditReportInfo"/>
+        <edge name="health" kind="embedded" target-type="AuditHealth"/>
+        <edge name="summary" kind="embedded" target-type="AuditSummary"/>
+        <edge name="categories" kind="embedded" target-type="Category" list="true"/>
+    </gql-type>
+    <gql-type name="AuditReportInfo">
+        <field name="date"/>
+        <field name="period"/>
+        <field name="running" type="Boolean"/>
+        <field name="extendedThru"/>
+        <field name="generatedAt"/>
+        <edge name="tenant" kind="embedded" target-type="AuditTenant"/>
+        <edge name="audit" kind="embedded" target-type="AuditRef"/>
+        <edge name="window" kind="embedded" target-type="AuditWindow"/>
+    </gql-type>
+    <gql-type name="AuditTenant">
+        <field name="id"/>
+        <field name="name"/>
+        <field name="timeZone"/>
+    </gql-type>
+    <gql-type name="AuditRef">
+        <field name="id"/>
+        <field name="name"/>
+        <field name="period"/>
+    </gql-type>
+    <gql-type name="AuditWindow">
+        <field name="from"/>
+        <field name="thru"/>
+    </gql-type>
+    <gql-type name="AuditHealth">
+        <field name="complete" type="Boolean"/>
+        <field name="summary"/>
+        <field name="notCovered" list="true"/>
+        <edge name="sources" kind="embedded" target-type="SourceHealth" list="true"/>
+        <edge name="checks" kind="embedded" target-type="CheckCounts"/>
+    </gql-type>
+    <gql-type name="SourceHealth">
+        <field name="system"/>
+        <field name="read"/>
+        <field name="records" type="Int"/>
+        <field name="readAt"/>
+        <field name="reason"/>
+        <field name="affects" list="true"/>
+    </gql-type>
+    <gql-type name="CheckCounts">
+        <field name="ran" type="Int"/>
+        <field name="partial" type="Int"/>
+        <field name="notRun" type="Int"/>
+    </gql-type>
+    <gql-type name="AuditSummary">
+        <field name="open" type="Int"/>
+        <field name="pending" type="Int"/>
+        <field name="newToday" type="Int"/>
+        <field name="fixedToday" type="Int"/>
+        <edge name="oldestOpen" kind="embedded" target-type="OldestOpen"/>
+        <edge name="byCategory" kind="embedded" target-type="CategoryCounts" list="true"/>
+    </gql-type>
+    <gql-type name="OldestOpen">
+        <field name="id"/>
+        <field name="statement"/>
+        <field name="firstFound"/>
+        <field name="ageDays" type="Int"/>
+    </gql-type>
+    <gql-type name="CategoryCounts">
+        <field name="category"/>
+        <field name="open" type="Int"/>
+        <field name="pending" type="Int"/>
+        <field name="newToday" type="Int"/>
+        <field name="fixedToday" type="Int"/>
+    </gql-type>
+    <gql-type name="FindingCounts">
+        <field name="open" type="Int"/>
+        <field name="pending" type="Int"/>
+        <field name="newToday" type="Int"/>
+        <field name="fixedToday" type="Int"/>
+    </gql-type>
+    <gql-type name="Category">
+        <field name="id"/>
+        <field name="label"/>
+        <edge name="counts" kind="embedded" target-type="FindingCounts"/>
+        <edge name="statements" kind="embedded" target-type="Statement" list="true"/>
+    </gql-type>
+    <gql-type name="Statement">
+        <field name="id"/>
+        <field name="text"/>
+        <field name="weight"/>
+        <field name="status"/>
+        <field name="reason"/>
+        <field name="findingsOmitted" type="Int"/>
+        <edge name="checks" kind="embedded" target-type="StatementCheck" list="true"/>
+        <edge name="counts" kind="embedded" target-type="FindingCounts"/>
+        <edge name="findings" kind="embedded" target-type="FindingSummary" list="true"/>
+    </gql-type>
+    <gql-type name="StatementCheck">
+        <field name="id"/>
+        <field name="label"/>
+        <field name="status"/>
+        <field name="reason"/>
+        <field name="matchedBy"/>
+        <field name="graceDays" type="Int"/>
+        <edge name="compared" kind="embedded" target-type="SystemCount" list="true"/>
+    </gql-type>
+    <gql-type name="SystemCount">
+        <field name="system"/>
+        <field name="count" type="Int"/>
+    </gql-type>
+    <gql-type name="FindingSummary">
+        <field name="id"/>
+        <field name="headline"/>
+        <field name="state"/>
+        <field name="firstFound"/>
+        <field name="ageDays" type="Int"/>
+        <field name="next"/>
+        <edge name="records" kind="embedded" target-type="FindingRecord" list="true"/>
+        <edge name="difference" kind="embedded" target-type="Money"/>
+    </gql-type>
+    <gql-type name="FindingRecord">
+        <field name="system"/>
+        <field name="recordType"/>
+        <field name="id"/>
+        <field name="internalId"/>
+        <field name="status"/>
+    </gql-type>
+    <gql-type name="Money">
+        <field name="amount"/>
+        <field name="currency"/>
+    </gql-type>
+    <gql-type name="MoneySource">
+        <field name="amount"/>
+        <field name="currency"/>
+        <field name="source"/>
+    </gql-type>
+    <gql-type name="AuditFindingDocument">
+        <field name="schema"/>
+        <edge name="finding" kind="embedded" target-type="Finding"/>
+        <edge name="access" kind="embedded" target-type="Access"/>
+    </gql-type>
+    <gql-type name="Finding">
+        <field name="id"/>
+        <field name="headline"/>
+        <field name="period"/>
+        <edge name="audit" kind="embedded" target-type="AuditRef"/>
+        <edge name="category" kind="embedded" target-type="CategoryRef"/>
+        <edge name="statement" kind="embedded" target-type="StatementRef"/>
+        <edge name="check" kind="embedded" target-type="CheckRef"/>
+        <edge name="status" kind="embedded" target-type="FindingStatus"/>
+        <edge name="records" kind="embedded" target-type="FindingRecord" list="true"/>
+        <edge name="evidence" kind="embedded" target-type="Evidence"/>
+        <edge name="diagnosis" kind="embedded" target-type="Diagnosis"/>
+        <edge name="fix" kind="embedded" target-type="Fix"/>
+        <edge name="history" kind="embedded" target-type="FindingEvent" list="true"/>
+    </gql-type>
+    <gql-type name="CategoryRef">
+        <field name="id"/>
+        <field name="label"/>
+    </gql-type>
+    <gql-type name="StatementRef">
+        <field name="id"/>
+        <field name="text"/>
+        <field name="weight"/>
+    </gql-type>
+    <gql-type name="CheckRef">
+        <field name="id"/>
+        <field name="label"/>
+        <field name="matchedBy"/>
+    </gql-type>
+    <gql-type name="FindingStatus">
+        <field name="state"/>
+        <field name="firstFound"/>
+        <field name="lastSeen"/>
+        <field name="lastChecked"/>
+        <field name="ageDays" type="Int"/>
+        <field name="timesSeen" type="Int"/>
+        <field name="pendingUntil"/>
+        <field name="closedAt"/>
+        <edge name="closedBy" kind="embedded" target-type="EventActor"/>
+    </gql-type>
+    <gql-type name="Evidence">
+        <field name="rule"/>
+        <edge name="expected" kind="embedded" target-type="MoneySource"/>
+        <edge name="actual" kind="embedded" target-type="MoneySource"/>
+        <edge name="difference" kind="embedded" target-type="Money"/>
+        <edge name="checks" kind="embedded" target-type="EvidenceCheck" list="true"/>
+    </gql-type>
+    <gql-type name="EvidenceCheck">
+        <field name="label"/>
+        <field name="passed" type="Boolean"/>
+        <field name="value"/>
+    </gql-type>
+    <gql-type name="Diagnosis">
+        <field name="explanation"/>
+        <edge name="conclusion" kind="embedded" target-type="Conclusion"/>
+    </gql-type>
+    <gql-type name="Conclusion">
+        <field name="code"/>
+        <field name="label"/>
+    </gql-type>
+    <gql-type name="Fix">
+        <field name="owner"/>
+        <field name="where"/>
+        <field name="action"/>
+        <field name="darpanChanges"/>
+        <edge name="verify" kind="embedded" target-type="FixVerify"/>
+    </gql-type>
+    <gql-type name="FixVerify">
+        <field name="by"/>
+        <field name="nextCheck"/>
+        <field name="passesWhen"/>
+    </gql-type>
+    <gql-type name="FindingEvent">
+        <field name="at"/>
+        <field name="event"/>
+        <edge name="by" kind="embedded" target-type="EventActor"/>
+    </gql-type>
+    <gql-type name="EventActor">
+        <field name="type"/>
+        <field name="id"/>
+        <field name="label"/>
+    </gql-type>
+    <gql-type name="Access">
+        <field name="mode"/>
+        <field name="note"/>
+    </gql-type>
 </gql-schema>

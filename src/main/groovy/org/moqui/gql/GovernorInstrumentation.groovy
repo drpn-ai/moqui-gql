@@ -203,6 +203,14 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
                 return c
             }
 
+            // ---- embedded edge (DAR-BE-098): already in memory, read from the parent row; no fan-out ----
+            GqlEdge embedded = (!atRoot) ? art.types.get(parentType.getName())?.edges?.get(field.getName()) : null
+            if (embedded != null && embedded.isEmbedded()) {
+                long child = (named instanceof GraphQLObjectType) ? cost(field.getSelectionSet(), (GraphQLObjectType) named, depth + 1, fanout) : 0L
+                bumpDepth(depth + 1)
+                return sat(1L + child)
+            }
+
             // ---- plain bounded list ([T!]!): optional first (has a default), still capped ----
             if (isListType(fd.getType()) && (named instanceof GraphQLObjectType)) {
                 Integer first = intArg(field, "first")

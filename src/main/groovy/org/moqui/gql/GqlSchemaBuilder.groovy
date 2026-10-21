@@ -46,11 +46,18 @@ class GqlSchemaBuilder {
         for (GqlType t in art.types.values()) {
             GraphQLObjectType.Builder b = GraphQLObjectType.newObject().name(t.name)
             for (GqlField fld in t.fields.values()) {
-                b.field(GraphQLFieldDefinition.newFieldDefinition().name(fld.name).type(scalarType(fld.type)).build())
+                GraphQLOutputType ft = fld.list ? GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(scalarType(fld.type)))) :
+                        (GraphQLOutputType) scalarType(fld.type)
+                b.field(GraphQLFieldDefinition.newFieldDefinition().name(fld.name).type(ft).build())
                 if (fld.isServiceBacked()) cm.serviceBackedFields.add(fld.name)
             }
             for (GqlEdge e in t.edges.values()) {
-                if (e.isPlainList()) {
+                if (e.isEmbedded()) {
+                    // In-memory: arrays are never null ([T!]!), a nested object may be.
+                    b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.name).type(e.list ?
+                            GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(e.targetType)))) :
+                            GraphQLTypeReference.typeRef(e.targetType)).build())
+                } else if (e.isPlainList()) {
                     cm.listFields.add(e.name)
                     b.field(plainListField(e.name, e.targetType))
                 } else if (e.isConnection()) {
