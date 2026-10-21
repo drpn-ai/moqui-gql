@@ -430,13 +430,29 @@ class GqlEngine {
                                 if (!tenant) return null
                                 params.put(rq.tenantParam, tenant)
                             }
-                            def result = ec.service.sync().name(rq.serviceName).parameters(params).call()
-                            if (ec.message.hasError()) {
-                                // DAR-BE-098: the service's own message (e.g. "Audit x was not found") becomes a GraphQL
-                                // error, rather than a null the caller cannot tell from "nothing there".
-                                String why = ec.message.errorsString
+                            // DAR-BE-098. Errors already on the context belong to someone else: set them aside so they are
+                            // neither blamed on this field nor shown to this caller, and restore them after.
+                            // getErrors() omits validation errors (a required parameter, a bad type), so both are kept.
+                            List<String> earlier = new ArrayList<String>(ec.message.getErrors())
+                            List earlierValidation = new ArrayList(ec.message.getValidationErrors())
+                            ec.message.clearErrors()
+                            Map result
+                            String raised = null
+                            try {
+                                result = ec.service.sync().name(rq.serviceName).parameters(params).call()
+                            } finally {
+                                if (ec.message.hasError()) raised = ec.message.getErrorsString() ?: "(no message)"
                                 ec.message.clearErrors()
-                                throw new IllegalStateException(why?.trim())
+                                for (String e in earlier) ec.message.addError(e)
+                                for (def v in earlierValidation) ec.message.addError((org.moqui.context.ValidationError) v)
+                            }
+                            // Only a message the service marks as public (its publicError out-parameter, e.g. "Audit x was
+                            // not found") reaches the caller. Any other error is framework or internal text: logged here,
+                            // generic there.
+                            if (result?.publicError) throw new IllegalStateException(result.publicError as String)
+                            if (raised) {
+                                ec.logger.warn("gql: service-backed root ${rq.name} (${rq.serviceName}) failed: ${raised.trim()}")
+                                throw new IllegalStateException("${rq.name} could not be completed".toString())
                             }
                             return rq.serviceOut ? (result != null ? result.get(rq.serviceOut) : null) : result
                         } as DataFetcher))
