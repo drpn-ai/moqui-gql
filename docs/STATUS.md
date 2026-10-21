@@ -1,11 +1,11 @@
 # moqui-gql — Status (Darpan fork)
 
-Last updated: 2026-10-19, at `main` 0c49b4b.
+Last updated: 2026-10-21 (DAR-BE-098..101), release notes for the first tag in `docs/releases/v0.1.0.md`.
 
-**Summary:** the engine runs in Darpan with a one-type, tenant-scoped schema, a session endpoint, a
-separate public API-key endpoint, query logging, a nightly purge and a 15-minute anomaly scan.
-GraphQL is not a supported public Darpan API yet: no Darpan UI or connector calls it, and the
-component has no release tag (both Dockerfiles build `MOQUI_GQL_REF=main`).
+**Summary:** the engine runs in Darpan with a tenant-scoped, read-only schema (reconciliation results, and the
+audit-run report and finding), a session endpoint, a separate public API-key endpoint with key management, query
+logging, a nightly purge and a 15-minute anomaly scan. v0.1.0 is prepared (`docs/releases/v0.1.0.md`) but not yet
+tagged, and both Dockerfiles still build `MOQUI_GQL_REF=main`.
 
 ---
 
@@ -32,7 +32,9 @@ the purge job.
 | Public endpoint | `POST /rest/s1/graphql/public` (`execute#PublicQuery`), API key only |
 | SDL | `GET /rest/s1/graphql/sdl`, no auth, prints the built schema |
 | Tenant scope | `DarpanTenantScopeFilter` on every find; session = active tenant, public = the key's tenant; no tenant = zero rows |
-| API keys | `create#ApiKey` (super-admin only, raw key returned once, SHA-256 stored), `resolve#ApiKey` (by digest, generic `UNAUTHENTICATED` on any failure) |
+| Audit run | `auditReport(audit:, date:, period:)` and `auditFinding(id:)`: service-backed, `tenant-param` from the key, embedded edges for the nested JSON; only a service's `publicError` reaches a caller |
+| Descriptions | Every declared type, field, edge, query and argument; printed by `/sdl`; a darpan test fails the build on a missing one |
+| API keys | `create#ApiKey`, `list#ApiKeys`, `disable#ApiKey`, `rotate#ApiKey` (super-admin only, self-gated; raw key returned once, SHA-256 stored, never listed); `resolve#ApiKey` (by digest, generic `UNAUTHENTICATED` on any failure, `lastUsedDate` at most once a minute) |
 | Governor | Static gate before SQL; codes `DEPTH_EXCEEDED`, `COST_EXCEEDED`, `FIRST_REQUIRED`, `FIRST_TOO_LARGE`, `FIELD_NOT_FILTERABLE`, `OPERATOR_NOT_ALLOWED`, `BATCH_LIMIT_EXCEEDED` |
 | Throttle | Per-caller token bucket, `THROTTLED`; keyed by `apiKeyId` on the public path, `userId` on the session path |
 | Runtime guards | Row cap per level, wall-clock budget (`DEADLINE_EXCEEDED`), one read-only transaction |
@@ -52,19 +54,22 @@ the purge job.
 
 ## Tests
 
-- The suite (`MoquiSuite`, 33 classes) is inherited from upstream. It targets the deleted OMS schema
-  and a MySQL OMS database (`hcsd_notnaked`, forced by `build.gradle`). It has not been ported and is
-  not expected to pass in Darpan.
-- `ApiKeyAuthTests` is the Darpan addition: key hashing, key generation, and the fixed-tenant filter
-  (blank tenant denies). It needs no booted Moqui, but it is run through the same suite.
+- `DarpanSuite` is the default test task: the engine's pure units, `ApiKeyAuthTests` (hashing, key
+  generation, the fixed-tenant filter) and `DarpanEngineAdditionsTests` (embedded edges, scalar lists,
+  tenant-param, descriptions). 25 tests, green.
+- The inherited `MoquiSuite` (33 classes) targets the deleted OMS schema and a MySQL OMS database; it runs
+  only with `-PomsSuite` and is not expected to pass in Darpan.
+- Darpan behaviour over Darpan entities is tested in the darpan component: `AuditGraphQlSmokeTests`
+  (two tenants over API keys, refused tenant argument, mutation rejected, cost ceiling, public errors),
+  `GraphQlSchemaDescriptionTests`, `GqlApiKeyManagementTests`.
 - The tenant isolation and per-key throttle behaviour were verified live at commit time
   (see the c33aa43, ba9a7ed and f1bca83 messages), not by an automated Darpan test.
 
 ## Known gaps
 
-- No release tag; pin one before any public exposure.
-- The test suite needs porting to the Darpan schema and an H2 or Darpan test database.
-- No key management services beyond create (list, disable, rotate are data edits).
+- v0.1.0 is not tagged yet; tag it and pin `MOQUI_GQL_REF` in both Dockerfiles before any public exposure.
+- `findings(query:)` search, `category(id:)` / `statement(id:)` lookups and GraphQL enums (DAR-BE-098 follow-ups).
+- No admin-app screen for API keys; a super-admin manages them over `/rpc/json`.
 - `GqlAnomalyAlert` has no reader service or UI.
 - Throttle buckets are per node and in memory (reset on restart).
 - On the session path, a caller profile with `scopeProductStoreId` replaces the tenant filter

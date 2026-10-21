@@ -1,6 +1,8 @@
 import spock.lang.Specification
 import org.moqui.context.ExecutionContext
 import org.moqui.entity.EntityCondition
+import org.moqui.entity.EntityConditionFactory
+import org.moqui.entity.EntityFacade
 import org.moqui.gql.auth.ApiKeyHasher
 import org.moqui.gql.scope.DarpanTenantScopeFilter
 
@@ -15,14 +17,25 @@ import org.moqui.gql.scope.DarpanTenantScopeFilter
  */
 class ApiKeyAuthTests extends Specification {
 
-    /** A minimal ExecutionContext whose conditionFactory.makeCondition(field, op, value) returns the
-     *  `value` it was handed, so the test can read back exactly which companyUserGroupId the filter chose. */
-    private static ExecutionContext stubEc(Closure<Void> tenantSupplier = null) {
-        def condFactory = [ makeCondition: { String f, EntityCondition.ComparisonOperator op, Object v -> v } ]
-        def entity = [ conditionFactory: condFactory ]
-        // For the no-arg (session) path conditionFor reads TenantAccessSupport (a static), which we do not
-        // exercise here; the fixed-tenant path never touches ec beyond the conditionFactory.
-        return ([ getEntity: { -> entity }, entity: entity ] as ExecutionContext)
+    /** The companyUserGroupId each conditionFor handed to makeCondition, in order. */
+    private static final List<Object> chosen = []
+
+    /**
+     * A minimal ExecutionContext whose conditionFactory records the value the filter conditions on, so the test can read
+     * back exactly which companyUserGroupId it chose. Typed proxies: DarpanTenantScopeFilter is @CompileStatic, so a
+     * plain Map standing in for EntityFacade fails with a ClassCastException (DAR-BE-101: this suite never ran before).
+     */
+    private static ExecutionContext stubEc() {
+        EntityConditionFactory condFactory = [makeCondition: { String f, EntityCondition.ComparisonOperator op, Object v ->
+            chosen << v; return (EntityCondition) null }] as EntityConditionFactory
+        EntityFacade entity = [getConditionFactory: { -> condFactory }] as EntityFacade
+        return ([getEntity: { -> entity }] as ExecutionContext)
+    }
+
+    private static Object tenantChosenBy(DarpanTenantScopeFilter filter) {
+        chosen.clear()
+        filter.conditionFor("OrderHeader", stubEc())
+        return chosen.size() == 1 ? chosen[0] : chosen
     }
 
     def "sha256Hex is the known SHA-256 hex of a known input"() {
@@ -65,7 +78,7 @@ class ApiKeyAuthTests extends Specification {
         given:
         def filter = new DarpanTenantScopeFilter("HotwaxTenantA")
         expect: // stub conditionFactory returns the value -> the tenant the filter chose
-        filter.conditionFor("OrderHeader", stubEc()) == "HotwaxTenantA"
+        tenantChosenBy(filter) == "HotwaxTenantA"
     }
 
     def "fixed-tenant filter DENIES on blank/null tenant (fail-closed: NO_TENANT sentinel)"() {
@@ -74,8 +87,8 @@ class ApiKeyAuthTests extends Specification {
         def spaceFilter = new DarpanTenantScopeFilter("   ")
         def nullFilter = new DarpanTenantScopeFilter((String) null)
         expect: "the deny sentinel, never a real/empty tenant that could widen the scope"
-        blankFilter.conditionFor("OrderHeader", stubEc()) == "__DARPAN_NO_ACTIVE_TENANT__"
-        spaceFilter.conditionFor("OrderHeader", stubEc()) == "__DARPAN_NO_ACTIVE_TENANT__"
-        nullFilter.conditionFor("OrderHeader", stubEc()) == "__DARPAN_NO_ACTIVE_TENANT__"
+        tenantChosenBy(blankFilter) == "__DARPAN_NO_ACTIVE_TENANT__"
+        tenantChosenBy(spaceFilter) == "__DARPAN_NO_ACTIVE_TENANT__"
+        tenantChosenBy(nullFilter) == "__DARPAN_NO_ACTIVE_TENANT__"
     }
 }

@@ -21,13 +21,16 @@ dependencies {
     compileOnly project(':runtime:component:darpan')
     // Match mantle-shopify-connector (same runtime classloader) — bytecode-11, runs on JDK 11.
     implementation 'com.graphql-java:graphql-java:25.0'   // pulls java-dataloader transitively
-    // JUnit Platform + Spock — mirrors moqui-ai / framework
-    testImplementation 'org.junit.platform:junit-platform-launcher:1.12.1'
-    testImplementation 'org.junit.platform:junit-platform-suite:1.12.1'
-    testImplementation 'org.junit.jupiter:junit-jupiter-api:5.12.1'
-    testImplementation platform("org.spockframework:spock-bom:2.1-groovy-3.0")
-    testImplementation 'org.spockframework:spock-core:2.1-groovy-3.0'
-    testImplementation 'org.spockframework:spock-junit4:2.1-groovy-3.0'
+    // JUnit Platform + Spock — the framework's own versions (framework/build.gradle). DAR-BE-101: these were Spock
+    // 2.1-groovy-3.0, which conflicts with Moqui 4's Groovy 5 and left the test classpath unresolvable.
+    testImplementation 'org.junit.platform:junit-platform-launcher:6.0.1'
+    testImplementation 'org.junit.platform:junit-platform-suite:6.0.1'
+    testImplementation 'org.junit.jupiter:junit-jupiter-api:6.0.1'
+    testImplementation platform('org.spockframework:spock-bom:2.4-groovy-5.0')
+    testImplementation 'org.spockframework:spock-core:2.4-groovy-5.0'
+    testImplementation 'org.spockframework:spock-junit4:2.4-groovy-5.0'
+    // The framework declares the servlet API compileOnlyApi, so tests that stub an ExecutionContext need it too.
+    testImplementation 'jakarta.servlet:jakarta.servlet-api:6.1.0'
 }
 
 // Runtime deploy: build the component classes into lib/moqui-gql.jar so a running Moqui server loads
@@ -61,25 +64,29 @@ task copyDependencies { doLast {
 copyDependencies.dependsOn cleanLib
 jar.dependsOn copyDependencies
 
+def omsSuite = project.hasProperty('omsSuite')
 test {
     useJUnitPlatform()
     testLogging { events "passed", "skipped", "failed" }
     testLogging.showStandardStreams = true; testLogging.showExceptions = true
     maxParallelForks 1
-    // run only the suite, exactly like framework/build.gradle
-    include '**/*MoquiSuite.class'
+    // DAR-BE-101: Darpan runs DarpanSuite (pure engine units + the Darpan additions) on the normal runtime. The inherited
+    // OMS-era MoquiSuite needs the deleted OMS schema and a MySQL OMS database; run it only with -PomsSuite.
+    include(omsSuite ? '**/*MoquiSuite.class' : '**/*DarpanSuite.class')
     systemProperty 'moqui.runtime', runtimeDir.absolutePath
     systemProperty 'moqui.conf', 'conf/MoquiDevConf.xml'
     systemProperty 'moqui.init.static', 'true'
-    // Force the populated MySQL `hcsd_notnaked` DB (real order data) over the H2 default.
-    // System properties beat conf default-property, so this is deterministic regardless of merge order.
-    // Values mirror the notnaked component MoquiConf dev defaults; override on the CLI with -Dentity_ds_*.
-    systemProperty 'entity_ds_db_conf', System.getProperty('entity_ds_db_conf', 'mysql8')
-    systemProperty 'entity_ds_host', System.getProperty('entity_ds_host', '127.0.0.1')
-    systemProperty 'entity_ds_port', System.getProperty('entity_ds_port', '3306')
-    systemProperty 'entity_ds_database', System.getProperty('entity_ds_database', 'hcsd_notnaked')
-    systemProperty 'entity_ds_user', System.getProperty('entity_ds_user', 'moqui')
-    systemProperty 'entity_ds_password', System.getProperty('entity_ds_password', 'moqui')
+    if (omsSuite) {
+        // Force the populated MySQL `hcsd_notnaked` DB (real order data) over the H2 default.
+        // System properties beat conf default-property, so this is deterministic regardless of merge order.
+        // Values mirror the notnaked component MoquiConf dev defaults; override on the CLI with -Dentity_ds_*.
+        systemProperty 'entity_ds_db_conf', System.getProperty('entity_ds_db_conf', 'mysql8')
+        systemProperty 'entity_ds_host', System.getProperty('entity_ds_host', '127.0.0.1')
+        systemProperty 'entity_ds_port', System.getProperty('entity_ds_port', '3306')
+        systemProperty 'entity_ds_database', System.getProperty('entity_ds_database', 'hcsd_notnaked')
+        systemProperty 'entity_ds_user', System.getProperty('entity_ds_user', 'moqui')
+        systemProperty 'entity_ds_password', System.getProperty('entity_ds_password', 'moqui')
+    }
     // Use an in-memory Bitronix journal for tests so the test ECF never touches runtime/txlog and
     // cannot collide with a running notnaked server (or an overlapping test JVM) on the shared
     // ${moqui.runtime}/txlog/btm*.tlog journal. Bitronix lets system props override its config file.
