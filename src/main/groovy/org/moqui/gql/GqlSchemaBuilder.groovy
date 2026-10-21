@@ -99,21 +99,21 @@ class GqlSchemaBuilder {
                         GraphQLTypeReference.typeRef(q.targetType)
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition().name(q.name).type(ret).description(q.description)
                 for (GqlArg a in q.args) fb.argument(arg(a.name, inputType(a.type, a.required), a.description))
+                // DAR-BE-098: a service root with search-keys / sort-keys takes the list roots' query / sortKey / reverse,
+                // validated by the same parser; the service receives the parsed terms (GqlEngine).
+                if (!q.searchKeys.isEmpty()) {
+                    fb.argument(arg("query", Scalars.GraphQLString, "A search string of key:value terms; see the field description for the keys."))
+                    fb.description((q.description ? q.description + " " : "") + "Filter via `query:` search string. Allowed keys: " + q.searchKeys.keySet().join(", "))
+                }
+                if (!q.sortKeys.isEmpty()) {
+                    fb.argument(arg("sortKey", sortEnum(enums, additional, q), "The field to sort by."))
+                    fb.argument(arg("reverse", Scalars.GraphQLBoolean, "Reverse the sort order."))
+                }
                 qb.field(fb.build())
                 cm.serviceBackedFields.add(q.name)   // opaque to static analysis -> fixed high cost
             } else if (q.list) {
                 cm.listFields.add(q.name)
-                GraphQLEnumType sortEnum = null
-                if (!q.sortKeys.isEmpty()) {
-                    String enumName = (q.targetType ?: q.name) + "SortKey"
-                    sortEnum = enums.get(enumName)
-                    if (sortEnum == null) {
-                        GraphQLEnumType.Builder eb = GraphQLEnumType.newEnum().name(enumName)
-                                .description("The orders a " + q.name + " list can be sorted in; reverse: true flips it.")
-                        q.sortKeys.each { String v, String field -> eb.value(v, v, "Sort by " + field + ".") }
-                        sortEnum = eb.build(); enums.put(enumName, sortEnum); additional.add(sortEnum)
-                    }
-                }
+                GraphQLEnumType sortEnum = q.sortKeys.isEmpty() ? null : sortEnum(enums, additional, q)
                 qb.field(connectionField(q.name, q.targetType, true, q.searchKeys.keySet(), sortEnum, q.description))
             } else if (q.byIdentification) {
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
@@ -135,6 +135,22 @@ class GqlSchemaBuilder {
                 .additionalTypes(new LinkedHashSet<GraphQLType>(additional))
                 .build()
         return new BuiltSchema(schema: schema, costModel: cm, artifact: art)
+    }
+
+    /** The <target>SortKey enum of a root's sort-keys, built once per name. */
+    private static GraphQLEnumType sortEnum(Map<String, GraphQLEnumType> enums, List<GraphQLType> additional, GqlRootQuery q) {
+        String base = q.targetType ?: q.name
+        // A service root returns its own <Node>Connection; the enum is named for the node, as a list root's is.
+        if (q.serviceBacked && base.endsWith("Connection")) base = base.substring(0, base.length() - "Connection".length())
+        String enumName = base + "SortKey"
+        GraphQLEnumType sortEnum = enums.get(enumName)
+        if (sortEnum == null) {
+            GraphQLEnumType.Builder eb = GraphQLEnumType.newEnum().name(enumName)
+                    .description("The orders a " + q.name + " list can be sorted in; reverse: true flips it.")
+            q.sortKeys.each { String v, String field -> eb.value(v, v, "Sort by " + field + ".") }
+            sortEnum = eb.build(); enums.put(enumName, sortEnum); additional.add(sortEnum)
+        }
+        return sortEnum
     }
 
     /** A plain bounded list field [Type!]! with a `first` cap arg (no Relay wrapper). */

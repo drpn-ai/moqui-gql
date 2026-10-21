@@ -423,6 +423,18 @@ class GqlEngine {
                             if (rq.serviceName == null) return null
                             Map<String, Object> params = new LinkedHashMap<String, Object>()
                             for (GqlArg a in rq.args) { def v = env.getArgument(a.name); if (v != null) params.put(a.name, v) }
+                            // DAR-BE-098: query: parsed by the list roots' parser (the governor has already refused an
+                            // undeclared key or comparator), handed over as terms; sortKey is the enum value's name.
+                            if (!rq.searchKeys.isEmpty()) {
+                                List<Map<String, Object>> terms = new ArrayList<Map<String, Object>>()
+                                for (def t in new org.moqui.gql.search.SearchQueryParser().parse((String) env.getArgument("query"), rq))
+                                    terms.add([key: (Object) t.key, comparator: (Object) t.comparator, values: (Object) t.values])
+                                params.put("searchTerms", terms)
+                            }
+                            if (!rq.sortKeys.isEmpty()) {
+                                if (env.getArgument("sortKey") != null) params.put("sortKey", env.getArgument("sortKey"))
+                                if (env.getArgument("reverse") != null) params.put("reverse", env.getArgument("reverse"))
+                            }
                             if (rq.tenantParam) {
                                 // DAR-BE-098: the tenant is the request's pinned scope, never an argument. No tenant,
                                 // no call: fail closed exactly as an entity read does.

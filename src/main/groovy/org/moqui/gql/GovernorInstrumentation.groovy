@@ -169,6 +169,9 @@ class GovernorInstrumentation extends SimplePerformantInstrumentation {
             //   future service root. (The inventory-key pair cap was removed with that root.) ----
             GqlRootQuery rootQ = atRoot ? art.rootQueries.get(field.getName()) : null
             if (rootQ != null && rootQ.serviceBacked) {
+                // DAR-BE-098: a paged service root is held to the list roots' search keys and page size.
+                if (!rootQ.searchKeys.isEmpty()) validateQuery(field, rootQ)
+                if (rootQ.args.any { it.name == "first" }) checkTooLarge(field, intArg(field, "first"), null)
                 long child = (named instanceof GraphQLObjectType) ? cost(nodeSelOrSelf(field), (GraphQLObjectType) named, depth + 1, fanout) : 0L
                 bumpDepth(depth + 1)
                 return sat((long) serviceFixedCost + child)

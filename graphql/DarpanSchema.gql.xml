@@ -51,6 +51,16 @@
             service-name="audit.AuditReportServices.get#AuditFindingGraph" service-out="finding" tenant-param="companyUserGroupId">
         <arg name="id" description="The finding's id, e.g. F-20761." type="ID" required="true"/>
     </root-query>
+    <!-- DAR-BE-098. Every finding of the key's tenant, across audits, statements and periods: the CLI's `findings list` and
+         `month export`. Each node is the report's finding summary plus where it sits, so it reads like the JSON. -->
+    <root-query name="findings" description="The tenant's findings, oldest first by default; each node is the report's finding summary plus its audit, statement, category and period. ageDays is as of today in the tenant's time zone."
+            target-type="FindingListItemConnection" service="true" service-name="audit.AuditReportServices.get#AuditFindingsGraph"
+            service-out="page" tenant-param="companyUserGroupId"
+            search-keys="audit:eq statement:eq,in category:eq,in state:eq,in period:eq,in firstFound:eq,gt,gte,lt,lte"
+            sort-keys="FIRST_FOUND:firstFound STATEMENT:statement">
+        <arg name="first" description="Return the first n findings, 1 to 100; default 50." type="Int"/>
+        <arg name="after" description="Return findings after this cursor (pageInfo.endCursor). A cursor belongs to its sortKey and reverse."/>
+    </root-query>
 
     <gql-type name="AuditReportDocument" description="One audit's report for one morning (darpan.audit.report/v1): whether the checks can be trusted, what is open, and every statement by category. The JSON's keyed objects are lists here, each element carrying its key.">
         <field name="schema" description="The document type and major version, always `darpan.audit.report/v1`."/>
@@ -167,6 +177,29 @@
         <field name="state" description="`open`, `pending` or `fixed` (fixed today)."/>
         <field name="firstFound" description="The morning a check first reported it."/>
         <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
+        <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
+        <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
+        <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
+    </gql-type>
+    <gql-type name="FindingListItemConnection" description="A page of findings.">
+        <edge name="edges" description="The findings on this page, in order." kind="embedded" target-type="FindingListItemEdge" list="true"/>
+        <edge name="pageInfo" description="Whether more pages follow or precede." kind="embedded" target-type="PageInfo"/>
+    </gql-type>
+    <gql-type name="FindingListItemEdge" description="One finding in a page, with the cursor that marks its place.">
+        <field name="cursor" description="Pass as after: to page on from this finding, in the same sortKey and reverse."/>
+        <edge name="node" description="The finding." kind="embedded" target-type="FindingListItem"/>
+    </gql-type>
+    <gql-type name="FindingListItem" description="A finding as findings(query:) lists it: the report's finding summary, plus where it sits.">
+        <field name="id" description="The finding's id."/>
+        <field name="audit" description="The audit's id within the tenant, e.g. `month-close`."/>
+        <field name="statement" description="The id of the statement it breaks, e.g. `R2`."/>
+        <field name="category" description="The statement's category: `orders`, `refundsAndCredits`, `returns` or `exchangesAndWarranty`."/>
+        <field name="period" description="The period whose run found it, e.g. `2026-10`."/>
+        <field name="headline" description="One line naming the record and what is wrong."/>
+        <field name="state" description="`open`, `pending` or `fixed`, as of the last check."/>
+        <field name="firstFound" description="The morning a check first reported it."/>
+        <field name="lastSeen" description="The last morning a check reported it."/>
+        <field name="ageDays" description="Days since `firstFound`, as of today in the tenant's time zone." type="Int"/>
         <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
         <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
         <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
