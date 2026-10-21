@@ -12,24 +12,24 @@
   gated parent edge, never as an unscoped root (the filter denies unrecognized roots fail-closed).
 -->
 <gql-schema>
-    <gql-type name="ReconciliationResult" entity-name="darpan.reconciliation.ReconciliationRunResult">
-        <field name="reconciliationRunResultId" entity-field="reconciliationRunResultId" type="ID"/>
-        <field name="savedRunId" entity-field="savedRunId" filterable="true"/>
-        <field name="savedRunType" entity-field="savedRunType"/>
-        <field name="reconciliationRunId" entity-field="reconciliationRunId" filterable="true"/>
-        <field name="reconciliationMappingId" entity-field="reconciliationMappingId"/>
-        <field name="ruleSetId" entity-field="ruleSetId" filterable="true"/>
-        <field name="file1Name" entity-field="file1Name"/>
-        <field name="file2Name" entity-field="file2Name"/>
-        <field name="statusEnumId" entity-field="statusEnumId" filterable="true"/>
-        <field name="reconciliationType" entity-field="reconciliationType"/>
-        <field name="differenceCount" entity-field="differenceCount" type="Int"/>
-        <field name="onlyInFile1Count" entity-field="onlyInFile1Count" type="Int"/>
-        <field name="onlyInFile2Count" entity-field="onlyInFile2Count" type="Int"/>
-        <field name="createdDate" entity-field="createdDate" type="DateTime" sortable="true"/>
+    <gql-type name="ReconciliationResult" description="One run of a saved reconciliation: which sources it compared, its outcome and how many records were on only one side." entity-name="darpan.reconciliation.ReconciliationRunResult">
+        <field name="reconciliationRunResultId" description="The run result's id." entity-field="reconciliationRunResultId" type="ID"/>
+        <field name="savedRunId" description="The saved run (rule set) this run executed." entity-field="savedRunId" filterable="true"/>
+        <field name="savedRunType" description="Which kind of saved run it was." entity-field="savedRunType"/>
+        <field name="reconciliationRunId" description="The run definition, when the run came from one." entity-field="reconciliationRunId" filterable="true"/>
+        <field name="reconciliationMappingId" description="The field mapping the run used, if any." entity-field="reconciliationMappingId"/>
+        <field name="ruleSetId" description="The rule set the run evaluated." entity-field="ruleSetId" filterable="true"/>
+        <field name="file1Name" description="The first source's file or extract name." entity-field="file1Name"/>
+        <field name="file2Name" description="The second source's file or extract name." entity-field="file2Name"/>
+        <field name="statusEnumId" description="How the run ended, e.g. AUT_STAT_SUCCESS." entity-field="statusEnumId" filterable="true"/>
+        <field name="reconciliationType" description="The kind of reconciliation the run performed." entity-field="reconciliationType"/>
+        <field name="differenceCount" description="Records found on only one side (onlyInFile1Count + onlyInFile2Count); value mismatches are not counted." entity-field="differenceCount" type="Int"/>
+        <field name="onlyInFile1Count" description="Records present in the first source and missing from the second." entity-field="onlyInFile1Count" type="Int"/>
+        <field name="onlyInFile2Count" description="Records present in the second source and missing from the first." entity-field="onlyInFile2Count" type="Int"/>
+        <field name="createdDate" description="When the run result was created." entity-field="createdDate" type="DateTime" sortable="true"/>
 
-        <root-query name="reconciliationResult" by-pk="true" pk-arg="reconciliationRunResultId"/>
-        <root-query name="reconciliationResults" list="true"
+        <root-query name="reconciliationResult" description="One reconciliation run result by id." by-pk="true" pk-arg="reconciliationRunResultId"/>
+        <root-query name="reconciliationResults" description="Reconciliation run results, newest or oldest first." list="true"
             search-keys="savedRunId:eq,in reconciliationRunId:eq ruleSetId:eq statusEnumId:eq,in"
             sort-keys="CREATED_DATE:createdDate RESULT_ID:reconciliationRunResultId"/>
     </gql-type>
@@ -41,241 +41,241 @@
          get#AuditReportGraph / get#AuditFindingGraph). Every nested object is an embedded edge, read from the one service
          result, so no type here reads an entity. The tenant is the key's: tenant-param, never an argument.
          Enum-valued fields carry the JSON's code as a String (open / pending / fixed ...). -->
-    <root-query name="auditReport" target-type="AuditReportDocument" service="true"
+    <root-query name="auditReport" description="An audit's report for one morning, from the tenant of the API key." target-type="AuditReportDocument" service="true"
             service-name="audit.AuditReportServices.get#AuditReportGraph" service-out="report" tenant-param="companyUserGroupId">
-        <arg name="audit" type="String" required="true"/>
-        <arg name="date" type="String"/>
-        <arg name="period" type="String"/>
+        <arg name="audit" description="The audit's code, e.g. month-close." type="String" required="true"/>
+        <arg name="date" description="The morning to describe, YYYY-MM-DD; blank is today in the tenant's time zone." type="String"/>
+        <arg name="period" description="Which period's run, e.g. 2026-10 while October is extended; blank is the morning's own period." type="String"/>
     </root-query>
-    <root-query name="auditFinding" target-type="AuditFindingDocument" service="true"
+    <root-query name="auditFinding" description="One finding by id, with its records, evidence, fix and history. Another tenant's finding reads as not found." target-type="AuditFindingDocument" service="true"
             service-name="audit.AuditReportServices.get#AuditFindingGraph" service-out="finding" tenant-param="companyUserGroupId">
-        <arg name="id" type="ID" required="true"/>
+        <arg name="id" description="The finding's id, e.g. F-20761." type="ID" required="true"/>
     </root-query>
 
-    <gql-type name="AuditReportDocument">
-        <field name="schema"/>
-        <field name="about"/>
-        <edge name="report" kind="embedded" target-type="AuditReportInfo"/>
-        <edge name="health" kind="embedded" target-type="AuditHealth"/>
-        <edge name="summary" kind="embedded" target-type="AuditSummary"/>
-        <edge name="categories" kind="embedded" target-type="Category" list="true"/>
+    <gql-type name="AuditReportDocument" description="One audit's report for one morning (darpan.audit.report/v1): whether the checks can be trusted, what is open, and every statement by category. The JSON's keyed objects are lists here, each element carrying its key.">
+        <field name="schema" description="The document type and major version, always `darpan.audit.report/v1`."/>
+        <field name="about" description="One sentence saying what this report covers for this tenant."/>
+        <edge name="report" description="Which tenant and audit, which morning, which days were read, and which period." kind="embedded" target-type="AuditReportInfo"/>
+        <edge name="health" description="Whether this morning's reads and checks can be trusted." kind="embedded" target-type="AuditHealth"/>
+        <edge name="summary" description="Counts across the whole tenant, and the oldest open finding." kind="embedded" target-type="AuditSummary"/>
+        <edge name="categories" description="The four categories, each holding its statements and their findings." kind="embedded" target-type="Category" list="true"/>
     </gql-type>
-    <gql-type name="AuditReportInfo">
-        <field name="date"/>
-        <field name="period"/>
-        <field name="running" type="Boolean"/>
-        <field name="extendedThru"/>
-        <field name="generatedAt"/>
-        <edge name="tenant" kind="embedded" target-type="AuditTenant"/>
-        <edge name="audit" kind="embedded" target-type="AuditRef"/>
-        <edge name="window" kind="embedded" target-type="AuditWindow"/>
+    <gql-type name="AuditReportInfo" description="Which tenant and audit, which morning, which days were read, and which period.">
+        <field name="date" description="The morning this report describes: the day the scheduled checks ran."/>
+        <field name="period" description="Which period's run this report describes. Each period of an audit is its own run and report; by default the period `date` falls in."/>
+        <field name="running" description="Whether this period's audit still runs on `date`: inside the period, or after it while a user's extension covers `date`." type="Boolean"/>
+        <field name="extendedThru" description="The last morning an ended period keeps running. After the period ends, users choose whether it continues; meanwhile the next period's audit starts."/>
+        <field name="generatedAt" description="When the assembler built this document."/>
+        <edge name="tenant" description="Which tenant this report is for." kind="embedded" target-type="AuditTenant"/>
+        <edge name="audit" description="Which audit this report is for." kind="embedded" target-type="AuditRef"/>
+        <edge name="window" description="The days the checks read." kind="embedded" target-type="AuditWindow"/>
     </gql-type>
-    <gql-type name="AuditTenant">
-        <field name="id"/>
-        <field name="name"/>
-        <field name="timeZone"/>
+    <gql-type name="AuditTenant" description="The tenant the report belongs to.">
+        <field name="id" description="The tenant's id, e.g. `GORJANA`."/>
+        <field name="name" description="The tenant's display name."/>
+        <field name="timeZone" description="The IANA zone that every `Date`, `DateTime` and day window in this document uses."/>
     </gql-type>
-    <gql-type name="AuditRef">
-        <field name="id"/>
-        <field name="name"/>
-        <field name="period"/>
+    <gql-type name="AuditRef" description="An audit: its id within the tenant, name, and the period it reports by.">
+        <field name="id" description="The audit's id within the tenant, e.g. `month-close` (`Audit.auditCode`)."/>
+        <field name="name" description="The audit's display name, e.g. &quot;Month close&quot;."/>
+        <field name="period" description="How the audit reports its period: `day`, `month` or `quarter`."/>
     </gql-type>
-    <gql-type name="AuditWindow">
-        <field name="from"/>
-        <field name="thru"/>
+    <gql-type name="AuditWindow" description="The days the checks read, both ends inclusive, in the tenant's time zone.">
+        <field name="from" description="The first day the checks read: the period's first day, so every open finding of the period is examined again each morning (DAR-BE-091)."/>
+        <field name="thru" description="The last day the checks read, inclusive: `date` itself while the period is current (&quot;on the 14th it reconciles 1-14&quot;), the period's last day once it has ended. Records from that morning are usually inside their check's grace age, so they show as `pending`."/>
     </gql-type>
-    <gql-type name="AuditHealth">
-        <field name="complete" type="Boolean"/>
-        <field name="summary"/>
-        <field name="notCovered" list="true"/>
-        <edge name="sources" kind="embedded" target-type="SourceHealth" list="true"/>
-        <edge name="checks" kind="embedded" target-type="CheckCounts"/>
+    <gql-type name="AuditHealth" description="Whether this morning's reads and checks can be trusted.">
+        <field name="complete" description="True only when every source read was complete and every configured check ran. Statements with no configured check do not make it false; they are listed in `notCovered`." type="Boolean"/>
+        <field name="summary" description="One or two sentences naming any source or check that was not complete, or saying that all were."/>
+        <field name="notCovered" description="Statements in the catalog with no configured check, for example deferred ones." list="true"/>
+        <edge name="sources" description="One entry for each system that any check read this morning." kind="embedded" target-type="SourceHealth" list="true"/>
+        <edge name="checks" description="How many configured checks ran, ran partially, or did not run." kind="embedded" target-type="CheckCounts"/>
     </gql-type>
-    <gql-type name="SourceHealth">
-        <field name="system"/>
-        <field name="read"/>
-        <field name="records" type="Int"/>
-        <field name="readAt"/>
-        <field name="reason"/>
-        <field name="affects" list="true"/>
+    <gql-type name="SourceHealth" description="One system's reads this morning, across every check that read it.">
+        <field name="system" description="The system: OMS, NetSuite or Shopify."/>
+        <field name="read" description="The worst status among this system's reads this morning."/>
+        <field name="records" description="Records read from this system, summed over its reads." type="Int"/>
+        <field name="readAt" description="When the last of this system's reads finished."/>
+        <field name="reason" description="Why the read was partial or failed, in plain words."/>
+        <field name="affects" description="Statements whose checks read this system and are not `ran` as a result; `[]` when the read was complete." list="true"/>
     </gql-type>
-    <gql-type name="CheckCounts">
-        <field name="ran" type="Int"/>
-        <field name="partial" type="Int"/>
-        <field name="notRun" type="Int"/>
+    <gql-type name="CheckCounts" description="How the configured checks ran this morning.">
+        <field name="ran" description="Configured checks that ran over complete reads." type="Int"/>
+        <field name="partial" description="Configured checks that ran over at least one partial or failed read." type="Int"/>
+        <field name="notRun" description="Configured checks that did not run this morning." type="Int"/>
     </gql-type>
-    <gql-type name="AuditSummary">
-        <field name="open" type="Int"/>
-        <field name="pending" type="Int"/>
-        <field name="newToday" type="Int"/>
-        <field name="fixedToday" type="Int"/>
-        <edge name="oldestOpen" kind="embedded" target-type="OldestOpen"/>
-        <edge name="byCategory" kind="embedded" target-type="CategoryCounts" list="true"/>
+    <gql-type name="AuditSummary" description="Counts across the whole tenant, and the oldest open finding.">
+        <field name="open" description="Findings in state `open`." type="Int"/>
+        <field name="pending" description="Findings in state `pending`, still inside their check's grace age." type="Int"/>
+        <field name="newToday" description="Findings first found on `report.date`, whether open or pending." type="Int"/>
+        <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
+        <edge name="oldestOpen" description="The open finding with the earliest `firstFound`." kind="embedded" target-type="OldestOpen"/>
+        <edge name="byCategory" description="The same four counts (`open`, `pending`, `newToday`, `fixedToday`) for each category; all four categories are present." kind="embedded" target-type="CategoryCounts" list="true"/>
     </gql-type>
-    <gql-type name="OldestOpen">
-        <field name="id"/>
-        <field name="statement"/>
-        <field name="firstFound"/>
-        <field name="ageDays" type="Int"/>
+    <gql-type name="OldestOpen" description="The open finding with the earliest `firstFound`.">
+        <field name="id" description="The finding's id."/>
+        <field name="statement" description="The statement id it breaks."/>
+        <field name="firstFound" description="The morning it was first found."/>
+        <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
     </gql-type>
-    <gql-type name="CategoryCounts">
-        <field name="category"/>
-        <field name="open" type="Int"/>
-        <field name="pending" type="Int"/>
-        <field name="newToday" type="Int"/>
-        <field name="fixedToday" type="Int"/>
+    <gql-type name="CategoryCounts" description="The four finding counts for one category.">
+        <field name="category" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
+        <field name="open" description="Findings in state `open`." type="Int"/>
+        <field name="pending" description="Findings in state `pending`, still inside their check's grace age." type="Int"/>
+        <field name="newToday" description="Findings first found on `report.date`, whether open or pending." type="Int"/>
+        <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
     </gql-type>
-    <gql-type name="FindingCounts">
-        <field name="open" type="Int"/>
-        <field name="pending" type="Int"/>
-        <field name="newToday" type="Int"/>
-        <field name="fixedToday" type="Int"/>
+    <gql-type name="FindingCounts" description="Findings by state for a category or statement: open, pending, new today and fixed today.">
+        <field name="open" description="Findings in state `open`." type="Int"/>
+        <field name="pending" description="Findings in state `pending`, still inside their check's grace age." type="Int"/>
+        <field name="newToday" description="Findings first found on `report.date`, whether open or pending." type="Int"/>
+        <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
     </gql-type>
-    <gql-type name="Category">
-        <field name="id"/>
-        <field name="label"/>
-        <edge name="counts" kind="embedded" target-type="FindingCounts"/>
-        <edge name="statements" kind="embedded" target-type="Statement" list="true"/>
+    <gql-type name="Category" description="One of the four categories (orders, refundsAndCredits, returns, exchangesAndWarranty), with its statements.">
+        <field name="id" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
+        <field name="label" description="The category's display name, e.g. &quot;Refunds and credits&quot;."/>
+        <edge name="counts" description="`open`, `pending`, `newToday` and `fixedToday` for this category." kind="embedded" target-type="FindingCounts"/>
+        <edge name="statements" description="Every catalog statement in this category; [] only when the tenant has none in it." kind="embedded" target-type="Statement" list="true"/>
     </gql-type>
-    <gql-type name="Statement">
-        <field name="id"/>
-        <field name="text"/>
-        <field name="weight"/>
-        <field name="status"/>
-        <field name="reason"/>
-        <field name="findingsOmitted" type="Int"/>
-        <edge name="checks" kind="embedded" target-type="StatementCheck" list="true"/>
-        <edge name="counts" kind="embedded" target-type="FindingCounts"/>
-        <edge name="findings" kind="embedded" target-type="FindingSummary" list="true"/>
+    <gql-type name="Statement" description="One thing the tenant needs to be true, its checks this morning, and the findings that break it.">
+        <field name="id" description="The statement id, e.g. R4."/>
+        <field name="text" description="The statement in the tenant's own words."/>
+        <field name="weight" description="Whether the tenant stated it (`firm`) or it was derived and awaits confirmation (`derived`)."/>
+        <field name="status" description="The worst status among this statement's checks; `notRun` when it has none."/>
+        <field name="reason" description="Why the statement's checks were partial or did not run."/>
+        <field name="findingsOmitted" description="How many findings were left out by the 50 cap; `0` when all are shown." type="Int"/>
+        <edge name="checks" description="Each configured check that tests this statement; `[]` when none is configured." kind="embedded" target-type="StatementCheck" list="true"/>
+        <edge name="counts" description="Ledger counts for this statement; never null, even when its check did not run today." kind="embedded" target-type="FindingCounts"/>
+        <edge name="findings" description="Open, pending and fixed-today findings, oldest first, at most 50." kind="embedded" target-type="FindingSummary" list="true"/>
     </gql-type>
-    <gql-type name="StatementCheck">
-        <field name="id"/>
-        <field name="label"/>
-        <field name="status"/>
-        <field name="reason"/>
-        <field name="matchedBy"/>
-        <field name="graceDays" type="Int"/>
-        <edge name="compared" kind="embedded" target-type="SystemCount" list="true"/>
+    <gql-type name="StatementCheck" description="A configured check that tests a statement, and how it ran this morning.">
+        <field name="id" description="The check's id."/>
+        <field name="label" description="What the check compares, in a few words."/>
+        <field name="status" description="How this check ran this morning."/>
+        <field name="reason" description="Why it was partial or did not run."/>
+        <field name="matchedBy" description='The shared id that the two sides are joined on, e.g. "return id (custbody_hc_return_id)".'/>
+        <field name="graceDays" description="Days a new finding stays `pending` before it counts as open; `0` means none." type="Int"/>
+        <edge name="compared" description="Records compared on each side." kind="embedded" target-type="SystemCount" list="true"/>
     </gql-type>
-    <gql-type name="SystemCount">
-        <field name="system"/>
-        <field name="count" type="Int"/>
+    <gql-type name="SystemCount" description="Records compared in one system.">
+        <field name="system" description="The system: OMS, NetSuite or Shopify."/>
+        <field name="count" description="Records compared in that system." type="Int"/>
     </gql-type>
-    <gql-type name="FindingSummary">
-        <field name="id"/>
-        <field name="headline"/>
-        <field name="state"/>
-        <field name="firstFound"/>
-        <field name="ageDays" type="Int"/>
-        <field name="next"/>
-        <edge name="records" kind="embedded" target-type="FindingRecord" list="true"/>
-        <edge name="difference" kind="embedded" target-type="Money"/>
+    <gql-type name="FindingSummary" description="A finding as a report lists it; auditFinding(id:) returns the whole finding.">
+        <field name="id" description="The finding's id."/>
+        <field name="headline" description="One line naming the record and what is wrong."/>
+        <field name="state" description="`open`, `pending` or `fixed` (fixed today)."/>
+        <field name="firstFound" description="The morning a check first reported it."/>
+        <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
+        <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
+        <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
+        <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
     </gql-type>
-    <gql-type name="FindingRecord">
-        <field name="system"/>
-        <field name="recordType"/>
-        <field name="id"/>
-        <field name="internalId"/>
-        <field name="status"/>
+    <gql-type name="FindingRecord" description="One record a finding names, in one system.">
+        <field name="system" description="The system the record lives in: OMS, NetSuite or Shopify."/>
+        <field name="recordType" description="The kind of record, e.g. invoice, creditMemo, return or orderItem."/>
+        <field name="id" description="The record's id in that system, as people see it."/>
+        <field name="internalId" description="The system's internal id, when it differs from id (NetSuite)."/>
+        <field name="status" description="The record's status in that system, when known."/>
     </gql-type>
-    <gql-type name="Money">
-        <field name="amount"/>
-        <field name="currency"/>
+    <gql-type name="Money" description="An amount: a decimal string at the currency's scale (2 for USD), with a leading - when negative, and its ISO 4217 currency.">
+        <field name="amount" description="A decimal string at the currency's scale, with a leading - when negative."/>
+        <field name="currency" description="The ISO 4217 currency code."/>
     </gql-type>
-    <gql-type name="MoneySource">
-        <field name="amount"/>
-        <field name="currency"/>
-        <field name="source"/>
+    <gql-type name="MoneySource" description="An amount and where it came from.">
+        <field name="amount" description="A decimal string at the currency's scale, with a leading - when negative."/>
+        <field name="currency" description="The ISO 4217 currency code."/>
+        <field name="source" description="Where the amount came from."/>
     </gql-type>
-    <gql-type name="AuditFindingDocument">
-        <field name="schema"/>
-        <edge name="finding" kind="embedded" target-type="Finding"/>
-        <edge name="access" kind="embedded" target-type="Access"/>
+    <gql-type name="AuditFindingDocument" description="Everything about one finding (darpan.audit.finding/v1), including how to fix and verify it.">
+        <field name="schema" description="The document type and major version, always `darpan.audit.report/v1`."/>
+        <edge name="finding" description="One record that breaks one statement." kind="embedded" target-type="Finding"/>
+        <edge name="access" description="What callers may do with it: read only, in v1." kind="embedded" target-type="Access"/>
     </gql-type>
-    <gql-type name="Finding">
-        <field name="id"/>
-        <field name="headline"/>
-        <field name="period"/>
-        <edge name="audit" kind="embedded" target-type="AuditRef"/>
-        <edge name="category" kind="embedded" target-type="CategoryRef"/>
-        <edge name="statement" kind="embedded" target-type="StatementRef"/>
-        <edge name="check" kind="embedded" target-type="CheckRef"/>
-        <edge name="status" kind="embedded" target-type="FindingStatus"/>
-        <edge name="records" kind="embedded" target-type="FindingRecord" list="true"/>
-        <edge name="evidence" kind="embedded" target-type="Evidence"/>
-        <edge name="diagnosis" kind="embedded" target-type="Diagnosis"/>
-        <edge name="fix" kind="embedded" target-type="Fix"/>
-        <edge name="history" kind="embedded" target-type="FindingEvent" list="true"/>
+    <gql-type name="Finding" description="One record that breaks one statement.">
+        <field name="id" description="The finding's id."/>
+        <field name="headline" description="One line naming the record and what is wrong."/>
+        <field name="period" description="The period whose run found it; it appears in that period's reports only."/>
+        <edge name="audit" description="The audit the broken statement belongs to." kind="embedded" target-type="AuditRef"/>
+        <edge name="category" description="The category of the statement it breaks." kind="embedded" target-type="CategoryRef"/>
+        <edge name="statement" description="The statement it breaks." kind="embedded" target-type="StatementRef"/>
+        <edge name="check" description="The check that found it." kind="embedded" target-type="CheckRef"/>
+        <edge name="status" description="Where the finding stands now." kind="embedded" target-type="FindingStatus"/>
+        <edge name="records" description="The record ids in each system." kind="embedded" target-type="FindingRecord" list="true"/>
+        <edge name="evidence" description="Why the record fails the statement." kind="embedded" target-type="Evidence"/>
+        <edge name="diagnosis" description="The named class of the finding." kind="embedded" target-type="Diagnosis"/>
+        <edge name="fix" description="How to fix it and how Darpan confirms the fix." kind="embedded" target-type="Fix"/>
+        <edge name="history" description="Every state change and sighting, oldest first." kind="embedded" target-type="FindingEvent" list="true"/>
     </gql-type>
-    <gql-type name="CategoryRef">
-        <field name="id"/>
-        <field name="label"/>
+    <gql-type name="CategoryRef" description="The category of the statement a finding breaks.">
+        <field name="id" description="The category of the statement it breaks."/>
+        <field name="label" description="The category's display name."/>
     </gql-type>
-    <gql-type name="StatementRef">
-        <field name="id"/>
-        <field name="text"/>
-        <field name="weight"/>
+    <gql-type name="StatementRef" description="The statement a finding breaks.">
+        <field name="id" description="The statement it breaks."/>
+        <field name="text" description="That statement in the tenant's own words, repeated so the finding stands alone."/>
+        <field name="weight" description="`firm` or `derived`."/>
     </gql-type>
-    <gql-type name="CheckRef">
-        <field name="id"/>
-        <field name="label"/>
-        <field name="matchedBy"/>
+    <gql-type name="CheckRef" description="The check that found a finding.">
+        <field name="id" description="The check that found it."/>
+        <field name="label" description="What that check compares."/>
+        <field name="matchedBy" description="The shared id the check joins on."/>
     </gql-type>
-    <gql-type name="FindingStatus">
-        <field name="state"/>
-        <field name="firstFound"/>
-        <field name="lastSeen"/>
-        <field name="lastChecked"/>
-        <field name="ageDays" type="Int"/>
-        <field name="timesSeen" type="Int"/>
-        <field name="pendingUntil"/>
-        <field name="closedAt"/>
-        <edge name="closedBy" kind="embedded" target-type="EventActor"/>
+    <gql-type name="FindingStatus" description="Where a finding stands and when it was seen.">
+        <field name="state" description="Where the finding stands now."/>
+        <field name="firstFound" description="The morning a check first reported it."/>
+        <field name="lastSeen" description="The latest morning a check still reported it."/>
+        <field name="lastChecked" description="When a check last looked at this record, whether or not it reported it."/>
+        <field name="ageDays" description="Days from `firstFound` to `lastSeen`, or to the closing day once fixed." type="Int"/>
+        <field name="timesSeen" description="Mornings on which a check reported it, counting the first." type="Int"/>
+        <field name="pendingUntil" description="The first morning it counts as open if it is still reported."/>
+        <field name="closedAt" description="When it became fixed."/>
+        <edge name="closedBy" description="What closed it: in v1, always the scheduled check." kind="embedded" target-type="EventActor"/>
     </gql-type>
-    <gql-type name="Evidence">
-        <field name="rule"/>
-        <edge name="expected" kind="embedded" target-type="MoneySource"/>
-        <edge name="actual" kind="embedded" target-type="MoneySource"/>
-        <edge name="difference" kind="embedded" target-type="Money"/>
-        <edge name="checks" kind="embedded" target-type="EvidenceCheck" list="true"/>
+    <gql-type name="Evidence" description="Why the record fails the statement: the rule, the amounts, and each sub-condition.">
+        <field name="rule" description="The exact condition the record failed, in plain words."/>
+        <edge name="expected" description="The amount the rule expected and where it came from." kind="embedded" target-type="MoneySource"/>
+        <edge name="actual" description="The amount found and where it came from." kind="embedded" target-type="MoneySource"/>
+        <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
+        <edge name="checks" description="Each sub-condition, in order; this is where non-money detail sits." kind="embedded" target-type="EvidenceCheck" list="true"/>
     </gql-type>
-    <gql-type name="EvidenceCheck">
-        <field name="label"/>
-        <field name="passed" type="Boolean"/>
-        <field name="value"/>
+    <gql-type name="EvidenceCheck" description="One sub-condition the record was tested against.">
+        <field name="label" description="The sub-condition in plain words."/>
+        <field name="passed" description="Whether the record met it." type="Boolean"/>
+        <field name="value" description='What was seen, e.g. "160.22 vs 160.23".'/>
     </gql-type>
-    <gql-type name="Diagnosis">
-        <field name="explanation"/>
-        <edge name="conclusion" kind="embedded" target-type="Conclusion"/>
+    <gql-type name="Diagnosis" description="The named class of the finding and what it means for this record.">
+        <field name="explanation" description="One sentence on what the conclusion means for this record."/>
+        <edge name="conclusion" description="The named class of the finding, from the tenant's conclusion catalog." kind="embedded" target-type="Conclusion"/>
     </gql-type>
-    <gql-type name="Conclusion">
-        <field name="code"/>
-        <field name="label"/>
+    <gql-type name="Conclusion" description="A conclusion from the tenant's conclusion catalog.">
+        <field name="code" description="The conclusion's code, e.g. CONC_NO_ETAIL_ID."/>
+        <field name="label" description="The conclusion's name in plain words."/>
     </gql-type>
-    <gql-type name="Fix">
-        <field name="owner"/>
-        <field name="where"/>
-        <field name="action"/>
-        <field name="darpanChanges"/>
-        <edge name="verify" kind="embedded" target-type="FixVerify"/>
+    <gql-type name="Fix" description="Who fixes the finding, where, how, and how Darpan confirms it.">
+        <field name="owner" description='The team that fixes it, e.g. "HotWax Support".'/>
+        <field name="where" description="The system where the fix is made."/>
+        <field name="action" description="What to change, with this record's values filled in."/>
+        <field name="darpanChanges" description='Always "Nothing. Darpan reads NetSuite and the OMS; it never writes to them.".'/>
+        <edge name="verify" description="How Darpan confirms the fix." kind="embedded" target-type="FixVerify"/>
     </gql-type>
-    <gql-type name="FixVerify">
-        <field name="by"/>
-        <field name="nextCheck"/>
-        <field name="passesWhen"/>
+    <gql-type name="FixVerify" description="How Darpan confirms the fix.">
+        <field name="by" description="Always &quot;Darpan's next scheduled check&quot; in v1."/>
+        <field name="nextCheck" description="When that check next runs."/>
+        <field name="passesWhen" description="What the check must see for the finding to close."/>
     </gql-type>
-    <gql-type name="FindingEvent">
-        <field name="at"/>
-        <field name="event"/>
-        <edge name="by" kind="embedded" target-type="EventActor"/>
+    <gql-type name="FindingEvent" description="One state change or sighting of a finding.">
+        <field name="at" description="When it happened."/>
+        <field name="event" description="What happened: found, stillOpen, fixed or reopened."/>
+        <edge name="by" description="Who or what caused it." kind="embedded" target-type="EventActor"/>
     </gql-type>
-    <gql-type name="EventActor">
-        <field name="type"/>
-        <field name="id"/>
-        <field name="label"/>
+    <gql-type name="EventActor" description="Who or what caused a finding event; in v1, always the scheduled check.">
+        <field name="type" description="check (a scheduled check) or user."/>
+        <field name="id" description="The check's id, or the user's."/>
+        <field name="label" description="A readable name for the actor."/>
     </gql-type>
-    <gql-type name="Access">
-        <field name="mode"/>
-        <field name="note"/>
+    <gql-type name="Access" description="What callers may do with this finding through the API.">
+        <field name="mode" description="Always `read-only` in v1."/>
+        <field name="note" description="That the API has no mutations, and that Darpan closes the finding at its next scheduled check."/>
     </gql-type>
 </gql-schema>

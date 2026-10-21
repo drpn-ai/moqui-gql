@@ -11,10 +11,10 @@ class SchemaArtifactParser {
         SchemaArtifact art = new SchemaArtifact()
         for (MNode root in schemaNodes) {
             for (MNode tn in root.children("gql-type")) {
-                GqlType t = new GqlType(name: tn.attribute("name"), entityName: tn.attribute("entity-name"))
+                GqlType t = new GqlType(name: tn.attribute("name"), entityName: tn.attribute("entity-name"), description: describe(tn))
                 for (MNode fn in tn.children("field")) {
                     t.fields.put(fn.attribute("name"), new GqlField(
-                            name: fn.attribute("name"), entityField: fn.attribute("entity-field"),
+                            name: fn.attribute("name"), entityField: fn.attribute("entity-field"), description: describe(fn),
                             type: fn.attribute("type"),
                             filterable: "true".equals(fn.attribute("filterable")),
                             sortable: "true".equals(fn.attribute("sortable")),
@@ -30,7 +30,7 @@ class SchemaArtifactParser {
                 }
                 for (MNode en in tn.children("edge")) {
                     t.edges.put(en.attribute("name"), new GqlEdge(
-                            name: en.attribute("name"), entityRelationship: en.attribute("entity-relationship"),
+                            name: en.attribute("name"), entityRelationship: en.attribute("entity-relationship"), description: describe(en),
                             targetType: en.attribute("target-type"), list: "true".equals(en.attribute("list")),
                             kind: en.attribute("kind") ?: "connection", firstDefault: asInt(en.attribute("first-default")),
                             sourceKey: en.attribute("source-key"),
@@ -54,7 +54,7 @@ class SchemaArtifactParser {
     private static void addRootQuery(SchemaArtifact art, MNode qn, String defaultTargetType) {
         String tgt = qn.attribute("target-type") ?: defaultTargetType
         GqlRootQuery rq = new GqlRootQuery(
-                name: qn.attribute("name"), targetType: tgt,
+                name: qn.attribute("name"), targetType: tgt, description: describe(qn),
                 entityName: qn.attribute("entity-name"), pkArg: qn.attribute("pk-arg"),
                 byPk: "true".equals(qn.attribute("by-pk")),
                 externalId: "true".equals(qn.attribute("external-id")),
@@ -71,12 +71,22 @@ class SchemaArtifactParser {
                 returnsList: "true".equals(qn.attribute("returns-list")),
                 tenantParam: qn.attribute("tenant-param"))
         for (MNode an in qn.children("arg")) rq.args.add(new GqlArg(
-                name: an.attribute("name"), type: an.attribute("type") ?: "String",
+                name: an.attribute("name"), type: an.attribute("type") ?: "String", description: describe(an),
                 required: "true".equals(an.attribute("required"))))
         // A tenant a caller could name would be a cross-tenant read: refuse the schema rather than serve it.
         if (rq.tenantParam && rq.args.any { it.name == rq.tenantParam })
             throw new IllegalArgumentException("root-query ${rq.name}: tenant-param ${rq.tenantParam} may not also be an arg")
         art.rootQueries.put(qn.attribute("name"), rq)
+    }
+
+    /** DAR-BE-099: a description attribute, or a <description> child for longer text; whitespace runs collapse to one space. */
+    private static String describe(MNode n) {
+        String d = n.attribute("description")
+        if (d == null || d.trim().isEmpty()) {
+            MNode child = n.first("description")
+            d = child != null ? child.getText() : null
+        }
+        return (d == null || d.trim().isEmpty()) ? null : d.trim().replaceAll("\\s+", " ")
     }
 
     private static Integer asInt(String s) { return (s != null && !s.isEmpty()) ? Integer.valueOf(s) : (Integer) null }

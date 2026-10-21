@@ -28,10 +28,11 @@ class GqlSchemaBuilder {
 
         // PageInfo (shared)
         additional.add(GraphQLObjectType.newObject().name("PageInfo")
-                .field(scalarField("hasNextPage", Scalars.GraphQLBoolean))
-                .field(scalarField("hasPreviousPage", Scalars.GraphQLBoolean))
-                .field(scalarField("startCursor", Scalars.GraphQLString))
-                .field(scalarField("endCursor", Scalars.GraphQLString))
+                .description("Where a page of a connection sits: whether more pages follow or precede, and the cursors to ask for them.")
+                .field(scalarField("hasNextPage", Scalars.GraphQLBoolean, "True when another page follows; ask with after: endCursor."))
+                .field(scalarField("hasPreviousPage", Scalars.GraphQLBoolean, "True when a page precedes this one; ask with before: startCursor."))
+                .field(scalarField("startCursor", Scalars.GraphQLString, "The cursor of the first edge on this page."))
+                .field(scalarField("endCursor", Scalars.GraphQLString, "The cursor of the last edge on this page."))
                 .build())
         additional.add(GqlScalars.DATE_TIME)
         additional.add(GqlScalars.DECIMAL)
@@ -44,27 +45,27 @@ class GqlSchemaBuilder {
 
         // object types
         for (GqlType t in art.types.values()) {
-            GraphQLObjectType.Builder b = GraphQLObjectType.newObject().name(t.name)
+            GraphQLObjectType.Builder b = GraphQLObjectType.newObject().name(t.name).description(t.description)
             for (GqlField fld in t.fields.values()) {
                 GraphQLOutputType ft = fld.list ? GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(scalarType(fld.type)))) :
                         (GraphQLOutputType) scalarType(fld.type)
-                b.field(GraphQLFieldDefinition.newFieldDefinition().name(fld.name).type(ft).build())
+                b.field(GraphQLFieldDefinition.newFieldDefinition().name(fld.name).type(ft).description(fld.description).build())
                 if (fld.isServiceBacked()) cm.serviceBackedFields.add(fld.name)
             }
             for (GqlEdge e in t.edges.values()) {
                 if (e.isEmbedded()) {
                     // In-memory: arrays are never null ([T!]!), a nested object may be.
-                    b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.name).type(e.list ?
+                    b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.name).description(e.description).type(e.list ?
                             GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(e.targetType)))) :
                             GraphQLTypeReference.typeRef(e.targetType)).build())
                 } else if (e.isPlainList()) {
                     cm.listFields.add(e.name)
-                    b.field(plainListField(e.name, e.targetType))
+                    b.field(plainListField(e.name, e.targetType, e.description))
                 } else if (e.isConnection()) {
                     cm.listFields.add(e.name)
-                    b.field(connectionField(e.name, e.targetType, false, null, null))
+                    b.field(connectionField(e.name, e.targetType, false, null, null, e.description))
                 } else {
-                    b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.name)
+                    b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.name).description(e.description)
                             .type(GraphQLTypeReference.typeRef(e.targetType)).build())
                 }
             }
@@ -74,13 +75,16 @@ class GqlSchemaBuilder {
         // connection + edge types per target
         for (String tgt in connTargets) {
             additional.add(GraphQLObjectType.newObject().name(tgt + "Edge")
-                    .field(scalarField("cursor", Scalars.GraphQLString))
-                    .field(GraphQLFieldDefinition.newFieldDefinition().name("node").type(GraphQLTypeReference.typeRef(tgt)).build())
+                    .description("One " + tgt + " in a connection, with the cursor that marks its place.")
+                    .field(scalarField("cursor", Scalars.GraphQLString, "Pass as after: or before: to page from this " + tgt + "."))
+                    .field(GraphQLFieldDefinition.newFieldDefinition().name("node").description("The " + tgt + ".")
+                            .type(GraphQLTypeReference.typeRef(tgt)).build())
                     .build())
             additional.add(GraphQLObjectType.newObject().name(tgt + "Connection")
-                    .field(GraphQLFieldDefinition.newFieldDefinition().name("edges")
+                    .description("A page of " + tgt + " records.")
+                    .field(GraphQLFieldDefinition.newFieldDefinition().name("edges").description("The records on this page, in order.")
                             .type(GraphQLList.list(GraphQLTypeReference.typeRef(tgt + "Edge"))).build())
-                    .field(GraphQLFieldDefinition.newFieldDefinition().name("pageInfo")
+                    .field(GraphQLFieldDefinition.newFieldDefinition().name("pageInfo").description("Whether more pages follow or precede.")
                             .type(GraphQLTypeReference.typeRef("PageInfo")).build())
                     .build())
         }
@@ -93,8 +97,8 @@ class GqlSchemaBuilder {
                 GraphQLOutputType ret = q.returnsList ?
                         GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(q.targetType)))) :
                         GraphQLTypeReference.typeRef(q.targetType)
-                GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition().name(q.name).type(ret)
-                for (GqlArg a in q.args) fb.argument(arg(a.name, inputType(a.type, a.required)))
+                GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition().name(q.name).type(ret).description(q.description)
+                for (GqlArg a in q.args) fb.argument(arg(a.name, inputType(a.type, a.required), a.description))
                 qb.field(fb.build())
                 cm.serviceBackedFields.add(q.name)   // opaque to static analysis -> fixed high cost
             } else if (q.list) {
@@ -105,20 +109,21 @@ class GqlSchemaBuilder {
                     sortEnum = enums.get(enumName)
                     if (sortEnum == null) {
                         GraphQLEnumType.Builder eb = GraphQLEnumType.newEnum().name(enumName)
+                                .description("The orders a " + q.name + " list can be sorted in; reverse: true flips it.")
                         for (String v in q.sortKeys.keySet()) eb.value(v)
                         sortEnum = eb.build(); enums.put(enumName, sortEnum); additional.add(sortEnum)
                     }
                 }
-                qb.field(connectionField(q.name, q.targetType, true, q.searchKeys.keySet(), sortEnum))
+                qb.field(connectionField(q.name, q.targetType, true, q.searchKeys.keySet(), sortEnum, q.description))
             } else if (q.byIdentification) {
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
-                        .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType))
+                        .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType)).description(q.description)
                 if (q.identTypeArg) fb.argument(arg(q.identTypeArg, Scalars.GraphQLString))
                 if (q.identValueArg) fb.argument(arg(q.identValueArg, Scalars.GraphQLString))
                 qb.field(fb.build())
             } else {
                 GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
-                        .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType))
+                        .name(q.name).type(GraphQLTypeReference.typeRef(q.targetType)).description(q.description)
                 if (q.pkArg) fb.argument(arg(q.pkArg, Scalars.GraphQLID))
                 if (q.externalId) fb.argument(arg("externalId", Scalars.GraphQLString))
                 qb.field(fb.build())
@@ -133,18 +138,18 @@ class GqlSchemaBuilder {
     }
 
     /** A plain bounded list field [Type!]! with a `first` cap arg (no Relay wrapper). */
-    private static GraphQLFieldDefinition plainListField(String name, String targetType) {
-        return GraphQLFieldDefinition.newFieldDefinition().name(name)
+    private static GraphQLFieldDefinition plainListField(String name, String targetType, String description) {
+        return GraphQLFieldDefinition.newFieldDefinition().name(name).description(description)
                 .type(GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(targetType)))))
-                .argument(arg("first", Scalars.GraphQLInt)).build()
+                .argument(arg("first", Scalars.GraphQLInt, "At most this many, capped by the server.")).build()
     }
 
     // ---- helpers ----
-    private static GraphQLFieldDefinition scalarField(String name, GraphQLScalarType type) {
-        return GraphQLFieldDefinition.newFieldDefinition().name(name).type(type).build()
+    private static GraphQLFieldDefinition scalarField(String name, GraphQLScalarType type, String description = null) {
+        return GraphQLFieldDefinition.newFieldDefinition().name(name).type(type).description(description).build()
     }
-    private static GraphQLArgument arg(String name, GraphQLInputType type) {
-        return GraphQLArgument.newArgument().name(name).type(type).build()
+    private static GraphQLArgument arg(String name, GraphQLInputType type, String description = null) {
+        return GraphQLArgument.newArgument().name(name).type(type).description(description).build()
     }
     private static GraphQLInputType inputType(String type, boolean required) {
         GraphQLInputType base
@@ -169,16 +174,19 @@ class GqlSchemaBuilder {
     }
     /** A connection field: returns <target>Connection with first/after/last/before (+ query/sortKey/reverse for roots). */
     private static GraphQLFieldDefinition connectionField(String name, String targetType, boolean root,
-                                                          Set<String> searchKeys, GraphQLEnumType sortEnum) {
+                                                          Set<String> searchKeys, GraphQLEnumType sortEnum, String description) {
         GraphQLFieldDefinition.Builder fb = GraphQLFieldDefinition.newFieldDefinition()
-                .name(name).type(GraphQLTypeReference.typeRef(targetType + "Connection"))
-                .argument(arg("first", Scalars.GraphQLInt)).argument(arg("after", Scalars.GraphQLString))
-                .argument(arg("last", Scalars.GraphQLInt)).argument(arg("before", Scalars.GraphQLString))
+                .name(name).type(GraphQLTypeReference.typeRef(targetType + "Connection")).description(description)
+                .argument(arg("first", Scalars.GraphQLInt, "Return the first n records (required unless last is given)."))
+                .argument(arg("after", Scalars.GraphQLString, "Return records after this cursor."))
+                .argument(arg("last", Scalars.GraphQLInt, "Return the last n records."))
+                .argument(arg("before", Scalars.GraphQLString, "Return records before this cursor."))
         if (root) {
-            fb.argument(arg("query", Scalars.GraphQLString)).argument(arg("reverse", Scalars.GraphQLBoolean))
-            if (sortEnum != null) fb.argument(arg("sortKey", sortEnum))
+            fb.argument(arg("query", Scalars.GraphQLString, "A search string of key:value terms; see the field description for the keys."))
+                    .argument(arg("reverse", Scalars.GraphQLBoolean, "Reverse the sort order."))
+            if (sortEnum != null) fb.argument(arg("sortKey", sortEnum, "The field to sort by."))
             if (searchKeys != null && !searchKeys.isEmpty())
-                fb.description("Filter via `query:` search string. Allowed keys: " + searchKeys.join(", "))
+                fb.description((description ? description + " " : "") + "Filter via `query:` search string. Allowed keys: " + searchKeys.join(", "))
         }
         return fb.build()
     }

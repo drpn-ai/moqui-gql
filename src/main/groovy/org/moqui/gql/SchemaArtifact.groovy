@@ -7,6 +7,8 @@ import groovy.transform.CompileStatic
 @CompileStatic
 class GqlField {
     String name, entityField, type
+    /** DAR-BE-099: printed in the SDL (and the generated GraphQL reference); every declared one must have it. */
+    String description
     boolean filterable = false, sortable = false
     /** DAR-BE-098: a list of scalars ([String!]!) read from the parent map, e.g. a report's notCovered ids. */
     boolean list = false
@@ -29,6 +31,8 @@ class GqlField {
 @CompileStatic
 class GqlEdge {
     String name, entityRelationship, targetType
+    /** DAR-BE-099: printed in the SDL (and the generated GraphQL reference); every declared one must have it. */
+    String description
     boolean list = false
     /** "connection" (Relay, default), "list" (plain bounded [Type!]! with a `first` cap), or "embedded"
      *  (DAR-BE-098): a nested map, or list of maps, read from the parent row itself. No entity read, so no
@@ -58,6 +62,8 @@ class GqlEdge {
 @CompileStatic
 class GqlType {
     String name, entityName
+    /** DAR-BE-099: printed in the SDL (and the generated GraphQL reference); every declared one must have it. */
+    String description
     Map<String, GqlField> fields = [:]
     Map<String, GqlEdge> edges = [:]
 }
@@ -66,12 +72,16 @@ class GqlType {
 @CompileStatic
 class GqlArg {
     String name, type
+    /** DAR-BE-099: printed in the SDL (and the generated GraphQL reference); every declared one must have it. */
+    String description
     boolean required = false
 }
 
 @CompileStatic
 class GqlRootQuery {
     String name, targetType, entityName, pkArg
+    /** DAR-BE-099: printed in the SDL (and the generated GraphQL reference); every declared one must have it. */
+    String description
     boolean byPk = false, externalId = false, list = false
     /** Service-backed root (decision 12 at root level): the field's value is a service call result. */
     boolean serviceBacked = false
