@@ -29,7 +29,7 @@ class SchemaArtifactParser {
                             aggregateField: fn.attribute("aggregate-field")))
                 }
                 for (MNode en in tn.children("edge")) {
-                    t.edges.put(en.attribute("name"), new GqlEdge(
+                    GqlEdge edge = new GqlEdge(
                             name: en.attribute("name"), entityRelationship: en.attribute("entity-relationship"), description: describe(en),
                             targetType: en.attribute("target-type"), list: "true".equals(en.attribute("list")),
                             kind: en.attribute("kind") ?: "connection", firstDefault: asInt(en.attribute("first-default")),
@@ -39,7 +39,19 @@ class SchemaArtifactParser {
                             resolverIn: splitList(en.attribute("resolver-in")),
                             single: "true".equals(en.attribute("single")), childEntity: en.attribute("entity-name"),
                             fk: en.attribute("fk"), parentKey: en.attribute("parent-key"),
-                            excludeEmpty: en.attribute("exclude-empty")))
+                            excludeEmpty: en.attribute("exclude-empty"),
+                            lookup: en.attribute("lookup"), lookupKey: en.attribute("lookup-key") ?: "id",
+                            lookupDescription: en.attribute("lookup-description"),
+                            lookupArgDescription: en.attribute("lookup-arg-description"))
+                    if (edge.lookup) {
+                        if (!edge.isEmbedded() || !edge.list)
+                            throw new IllegalArgumentException("edge ${t.name}.${edge.name}: lookup is for an embedded list edge only")
+                        if (!edge.lookupDescription || !edge.lookupArgDescription)
+                            throw new IllegalArgumentException("edge ${t.name}.${edge.name}: lookup needs lookup-description and lookup-arg-description")
+                        if (t.edges.containsKey(edge.lookup) || t.fields.containsKey(edge.lookup))
+                            throw new IllegalArgumentException("edge ${t.name}.${edge.name}: lookup ${edge.lookup} is already a field of ${t.name}")
+                    }
+                    t.edges.put(en.attribute("name"), edge)
                 }
                 art.types.put(t.name, t)
                 // root-query declared inside a gql-type: target-type defaults to the enclosing type

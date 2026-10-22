@@ -388,6 +388,17 @@ class GqlEngine {
                             def v = (s instanceof Map) ? ((Map) s).get(key) : null
                             return (many && v == null) ? [] : v
                         } as DataFetcher))
+                if (e.lookup) {
+                    final String matchKey = e.lookupKey
+                    code.dataFetcher(FieldCoordinates.coordinates(t.name, e.lookup),
+                            ({ DataFetchingEnvironment env ->
+                                def s = env.getSource()
+                                def v = (s instanceof Map) ? ((Map) s).get(key) : null
+                                String wanted = env.getArgument(matchKey) as String
+                                return (v instanceof Collection) ?
+                                        ((Collection) v).find { (it instanceof Map) && wanted == ((Map) it).get(matchKey)?.toString() } : null
+                            } as DataFetcher))
+                }
             }
         }
 

@@ -23,7 +23,8 @@ class DarpanEngineAdditionsTests extends Specification {
         <gql-type name="Report" description="One report.">
           <field name="notCovered" list="true" description="Ids with no check."/>
           <edge name="health" kind="embedded" target-type="Health" description="Whether it can be trusted."/>
-          <edge name="sections" kind="embedded" target-type="Section" list="true" description="Each section."/>
+          <edge name="sections" kind="embedded" target-type="Section" list="true" description="Each section."
+                lookup="section" lookup-description="One section by id." lookup-arg-description="The section's id."/>
         </gql-type>
         <gql-type name="Health"><description>Read
             health.</description><field name="complete" type="Boolean"/></gql-type>
@@ -70,5 +71,30 @@ class DarpanEngineAdditionsTests extends Specification {
         !built.costModel.listFields.contains("sections")                    // no per-element fan-out
         built.schema.queryType.getFieldDefinition("report").getArgument("companyUserGroupId") == null
         sdl.contains('"One report."') && sdl.contains('"Each section."') && sdl.contains('"The day."')
+    }
+
+    def "an embedded list edge with a lookup also offers one element by key, nullable, with a required argument"() {
+        when:
+        def built = new GqlSchemaBuilder().build(parse(SCHEMA))
+        def section = built.schema.getObjectType("Report").getFieldDefinition("section")
+        String sdl = new SchemaPrinter().print(built.schema)
+        then:
+        !(section.type instanceof GraphQLNonNull)                            // null when no element matches
+        section.getArgument("id").type instanceof GraphQLNonNull
+        sdl.contains('"One section by id."') && sdl.contains('"The section\'s id."')
+        !built.costModel.listFields.contains("section")
+    }
+
+    def "a lookup on anything but an embedded list, or without descriptions, or on a taken name, is refused"() {
+        when:
+        parse(xml)
+        then:
+        IllegalArgumentException e = thrown()
+        e.message.contains(expected)
+        where:
+        xml                                                                                                                                                                                              | expected
+        '<gql-schema><gql-type name="T"><edge name="one" kind="embedded" target-type="T" lookup="x" lookup-description="d" lookup-arg-description="a"/></gql-type></gql-schema>'                          | "embedded list edge only"
+        '<gql-schema><gql-type name="T"><edge name="many" kind="embedded" list="true" target-type="T" lookup="x"/></gql-type></gql-schema>'                                                              | "lookup-description"
+        '<gql-schema><gql-type name="T"><field name="x"/><edge name="many" kind="embedded" list="true" target-type="T" lookup="x" lookup-description="d" lookup-arg-description="a"/></gql-type></gql-schema>' | "already a field"
     }
 }

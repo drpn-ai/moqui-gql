@@ -68,7 +68,9 @@
         <edge name="report" description="Which tenant and audit, which morning, which days were read, and which period." kind="embedded" target-type="AuditReportInfo"/>
         <edge name="health" description="Whether this morning's reads and checks can be trusted." kind="embedded" target-type="AuditHealth"/>
         <edge name="summary" description="Counts across the whole tenant, and the oldest open finding." kind="embedded" target-type="AuditSummary"/>
-        <edge name="categories" description="The four categories, each holding its statements and their findings." kind="embedded" target-type="Category" list="true"/>
+        <edge name="categories" description="The four categories, each holding its statements and their findings." kind="embedded" target-type="Category" list="true"
+                lookup="category" lookup-description="One of the four categories by its id; null for an id that is not one of them."
+                lookup-arg-description="The category id: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
     </gql-type>
     <gql-type name="AuditReportInfo" description="Which tenant and audit, which morning, which days were read, and which period.">
         <field name="date" description="The morning this report describes: the day the scheduled checks ran."/>
@@ -145,7 +147,9 @@
         <field name="id" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
         <field name="label" description="The category's display name, e.g. &quot;Refunds and credits&quot;."/>
         <edge name="counts" description="`open`, `pending`, `newToday` and `fixedToday` for this category." kind="embedded" target-type="FindingCounts"/>
-        <edge name="statements" description="Every catalog statement in this category; [] only when the tenant has none in it." kind="embedded" target-type="Statement" list="true"/>
+        <edge name="statements" description="Every catalog statement in this category; [] only when the tenant has none in it." kind="embedded" target-type="Statement" list="true"
+                lookup="statement" lookup-description="One statement of this category by its id; null when the category has no statement with that id."
+                lookup-arg-description="The statement id in the tenant's catalog, e.g. R8."/>
     </gql-type>
     <gql-type name="Statement" description="One thing the tenant needs to be true, its checks this morning, and the findings that break it.">
         <field name="id" description="The statement id, e.g. R4."/>

@@ -58,6 +58,11 @@ class GqlSchemaBuilder {
                     b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.name).description(e.description).type(e.list ?
                             GraphQLNonNull.nonNull(GraphQLList.list(GraphQLNonNull.nonNull(GraphQLTypeReference.typeRef(e.targetType)))) :
                             GraphQLTypeReference.typeRef(e.targetType)).build())
+                    // One element by key, null when none matches (DAR-BE-098: category(id:), statement(id:)).
+                    if (e.lookup) b.field(GraphQLFieldDefinition.newFieldDefinition().name(e.lookup).description(e.lookupDescription)
+                            .argument(GraphQLArgument.newArgument().name(e.lookupKey).description(e.lookupArgDescription)
+                                    .type(GraphQLNonNull.nonNull(Scalars.GraphQLString)).build())
+                            .type(GraphQLTypeReference.typeRef(e.targetType)).build())
                 } else if (e.isPlainList()) {
                     cm.listFields.add(e.name)
                     b.field(plainListField(e.name, e.targetType, e.description))

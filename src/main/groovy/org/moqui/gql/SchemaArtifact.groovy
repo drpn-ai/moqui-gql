@@ -40,6 +40,12 @@ class GqlEdge {
     String kind = "connection"
     /** Embedded edge: the parent map key to read; defaults to the edge name. */
     String sourceKey = null
+    /** Embedded list edge (DAR-BE-098): also offer one element by key, e.g. `category(id:)` beside `categories`.
+     *  lookup is the singular field's name, lookupKey the element field the argument matches (default id). */
+    String lookup = null
+    String lookupKey = "id"
+    String lookupDescription = null
+    String lookupArgDescription = null
     Integer firstDefault = null
     Integer costOverride = null
     String resolverService = null
