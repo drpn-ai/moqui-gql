@@ -33,14 +33,13 @@ class SchemaArtifactParser {
                             name: en.attribute("name"), entityRelationship: en.attribute("entity-relationship"), description: describe(en),
                             targetType: en.attribute("target-type"), list: "true".equals(en.attribute("list")),
                             kind: en.attribute("kind") ?: "connection", firstDefault: asInt(en.attribute("first-default")),
-                            sourceKey: en.attribute("source-key"),
                             costOverride: asInt(en.attribute("cost")),
                             resolverService: en.attribute("resolver-service"),
                             resolverIn: splitList(en.attribute("resolver-in")),
                             single: "true".equals(en.attribute("single")), childEntity: en.attribute("entity-name"),
                             fk: en.attribute("fk"), parentKey: en.attribute("parent-key"),
                             excludeEmpty: en.attribute("exclude-empty"),
-                            lookup: en.attribute("lookup"), lookupKey: en.attribute("lookup-key") ?: "id",
+                            lookup: en.attribute("lookup"),
                             lookupDescription: en.attribute("lookup-description"),
                             lookupArgDescription: en.attribute("lookup-arg-description"))
                     if (edge.lookup) {

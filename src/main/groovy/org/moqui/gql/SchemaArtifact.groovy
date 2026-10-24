@@ -38,12 +38,9 @@ class GqlEdge {
      *  (DAR-BE-098): a nested map, or list of maps, read from the parent row itself. No entity read, so no
      *  `first` and no fan-out cost; the service that produced the parent already did the work. */
     String kind = "connection"
-    /** Embedded edge: the parent map key to read; defaults to the edge name. */
-    String sourceKey = null
     /** Embedded list edge (DAR-BE-098): also offer one element by key, e.g. `category(id:)` beside `categories`.
-     *  lookup is the singular field's name, lookupKey the element field the argument matches (default id). */
+     *  lookup is the singular field's name; its `id` argument matches the element's id. */
     String lookup = null
-    String lookupKey = "id"
     String lookupDescription = null
     String lookupArgDescription = null
     Integer firstDefault = null

@@ -380,7 +380,7 @@ class GqlEngine {
         for (GqlType t in art.types.values()) {
             for (GqlEdge e in t.edges.values()) {
                 if (!e.isEmbedded()) continue
-                final String key = e.sourceKey ?: e.name
+                final String key = e.name
                 final boolean many = e.list
                 code.dataFetcher(FieldCoordinates.coordinates(t.name, e.name),
                         ({ DataFetchingEnvironment env ->
@@ -389,14 +389,13 @@ class GqlEngine {
                             return (many && v == null) ? [] : v
                         } as DataFetcher))
                 if (e.lookup) {
-                    final String matchKey = e.lookupKey
                     code.dataFetcher(FieldCoordinates.coordinates(t.name, e.lookup),
                             ({ DataFetchingEnvironment env ->
                                 def s = env.getSource()
                                 def v = (s instanceof Map) ? ((Map) s).get(key) : null
-                                String wanted = env.getArgument(matchKey) as String
+                                String wanted = env.getArgument("id") as String
                                 return (v instanceof Collection) ?
-                                        ((Collection) v).find { (it instanceof Map) && wanted == ((Map) it).get(matchKey)?.toString() } : null
+                                        ((Collection) v).find { (it instanceof Map) && wanted == ((Map) it).get("id")?.toString() } : null
                             } as DataFetcher))
                 }
             }

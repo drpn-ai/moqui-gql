@@ -75,8 +75,7 @@
     <gql-type name="AuditReportInfo" description="Which tenant and audit, which morning, which days were read, and which period.">
         <field name="date" description="The morning this report describes: the day the scheduled checks ran."/>
         <field name="period" description="Which period's run this report describes. Each period of an audit is its own run and report; by default the period `date` falls in."/>
-        <field name="running" description="Whether this period's audit still runs on `date`: inside the period, or after it while a user's extension covers `date`." type="Boolean"/>
-        <field name="extendedThru" description="The last morning an ended period keeps running. After the period ends, users choose whether it continues; meanwhile the next period's audit starts."/>
+        <field name="running" description="Whether `date` falls inside this period, so its audit still runs that morning." type="Boolean"/>
         <field name="generatedAt" description="When the assembler built this document."/>
         <edge name="tenant" description="Which tenant this report is for." kind="embedded" target-type="AuditTenant"/>
         <edge name="audit" description="Which audit this report is for." kind="embedded" target-type="AuditRef"/>
