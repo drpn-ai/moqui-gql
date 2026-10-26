@@ -14,6 +14,11 @@
     <default-property name="gql.wallClockBudgetMs" value="30000"/>
     <default-property name="gql.useClone" value="true"/>
 
+    <!-- Browser CORS for the API-key realm: origins listed in webapp_public_api_origins (set per deployment) may call
+         these paths from a page WITHOUT credentials (MoquiServlet.handlePublicApiCors), e.g. a docs-site explorer.
+         The session realm (POST /rest/s1/graphql) is deliberately not listed. -->
+    <default-property name="webapp_public_api_paths" value="/rest/s1/graphql/public,/rest/s1/graphql/sdl"/>
+
     <!-- Query-log v2 policy (see docs/implementation-plan-query-log-v2.md). Raw GqlQueryLog rows:
          every REJECTED query; ALLOWED queries slow for their shape (avg + 2.6 sigma after warmupHits,
          over slowMinMillis — framework slow-hit math); plus a sampleRate random sample. All hits
