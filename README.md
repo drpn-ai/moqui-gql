@@ -51,14 +51,21 @@ not set that field on profiles for Darpan users.
 
 ## Public API-key realm
 
-- `gql.GqlAuthServices.create#ApiKey` mints a key for one tenant. Super-admin only. The raw key
-  (prefix `dgql_`) is returned once; only its SHA-256 digest is stored in `GqlApiKey`.
+- `gql.GqlAuthServices.create#ApiKey` mints a key for one tenant, labelled by `clientName`, with an
+  optional `expireDate`. Super-admin only. The raw key (prefix `dgql_`) is returned once; only its
+  SHA-256 digest is stored in `GqlApiKey`.
 - `resolve#ApiKey` looks the key up by digest. Missing, unknown, disabled or expired keys all get the
   same `UNAUTHENTICATED` error and the query does not run. A session without a key is rejected.
 - A key may carry a `GqlCallerProfile` (cost and throttle limits). The throttle bucket and the query
   log are keyed by `apiKeyId`, so each key has its own budget.
 
-There is no service to list, disable or rotate keys yet; that is a data change on `GqlApiKey`.
+Managing keys, all super-admin only:
+
+- `list#ApiKeys` lists keys newest first (label, tenant, profile, enabled, created, expires, last
+  used), optionally for one tenant. Never the key or its digest.
+- `disable#ApiKey` turns a key off from the next request on. Use it for a leaked key.
+- `rotate#ApiKey` mints a new key for the same tenant, profile and label and returns it once. The old
+  key keeps working for `graceMinutes` (default 60, 0 ends it now) so the agent can switch over.
 
 ## Governance
 
