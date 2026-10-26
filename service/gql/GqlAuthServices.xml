@@ -2,48 +2,43 @@
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://moqui.org/xsd/service-definition-3.xsd">
     <!-- Auth realm for the PUBLIC GraphQL tier (separate from the internal session /graphql endpoint).
          SECURITY-CRITICAL: the raw API key is NEVER stored or logged — only its SHA-256 hex digest.
-         create#ApiKey mints a key (admin-only, raw key returned ONCE); resolve#ApiKey validates a
-         presented key fail-closed (by hash, not raw compare) and returns the key's fixed tenant + profile. -->
+         create#ApiKey mints a key (tenant-admin, raw key returned ONCE); resolve#ApiKey validates a
+         presented key fail-closed (by hash, not raw compare) and returns the key's fixed tenant + profile.
+         DAR-BE-136: a key's tenant is the caller's ACTIVE tenant, never an input. GqlApiKey is a moqui.* entity, so no
+         EntityFilter scopes it; every managing service checks the tenant itself. -->
 
     <service verb="create" noun="ApiKey" authenticate="true" allow-remote="true">
-        <description>Mint a per-client API key for the public GraphQL tier. SECURITY: generates a
-            cryptographically-random key (SecureRandom, 256 bits, URL-safe base64, prefixed "dgql_"),
-            stores ONLY its SHA-256 hex digest, and returns the RAW key exactly ONCE in the `apiKey`
-            out-param. The raw key is NOT recoverable afterwards — capture it now or re-mint. Admin-only
-            key minting: this does NOT require tenant membership, so a super-admin can mint keys for any
-            tenant. companyUserGroupId is the tenant every read made with this key is fixed to.</description>
+        <description>Mint a per-client API key for the public GraphQL tier, for the caller's ACTIVE tenant: every read
+            made with the key is fixed to that tenant, even when the caller also administers others. Tenant admin of the
+            active tenant, or super-admin. SECURITY: generates a cryptographically-random key (SecureRandom, 256 bits,
+            URL-safe base64, prefixed "dgql_"), stores ONLY its SHA-256 hex digest, and returns the RAW key exactly ONCE
+            in the `apiKey` out-param. The raw key is NOT recoverable afterwards — capture it now or re-mint.</description>
         <in-parameters>
-            <parameter name="companyUserGroupId" required="true"><description>The tenant this key is scoped to.</description></parameter>
             <parameter name="clientName" required="true"><description>Human-readable client identity for audit.</description></parameter>
-            <parameter name="profileId"><description>Optional cost/governor profile (GqlCallerProfile).</description></parameter>
+            <parameter name="profileId"><description>Optional cost/governor profile (GqlCallerProfile). Super-admin only.</description></parameter>
             <parameter name="expireDate" type="Timestamp"><description>Optional expiry; null = never expires.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="apiKey"><description>The RAW key, shown ONCE and not recoverable. Deliver securely to the client.</description></parameter>
             <parameter name="apiKeyId"/>
+            <parameter name="companyUserGroupId"><description>The tenant the key is fixed to: the caller's active tenant.</description></parameter>
         </out-parameters>
         <actions>
-            <script><![CDATA[
-                // SECURITY (admin gate): minting a public API key for ANY tenant is super-admin-only.
-                // Without this any authenticated user could self-serve a cross-tenant public key. Fail-closed.
-                if (!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)) {
-                    ec.message.addError("Minting a public GraphQL API key requires super-admin.")
-                    return
-                }
-                // 256 bits of entropy from SecureRandom, URL-safe base64 (no padding), prefixed "dgql_".
-                String rawKey = org.moqui.gql.auth.ApiKeyHasher.generateRawKey()
-                // Store ONLY the hash. NEVER persist or log rawKey.
-                String keyHash = org.moqui.gql.auth.ApiKeyHasher.sha256Hex(rawKey)
-                String newId = ec.entity.sequencedIdPrimary("moqui.gql.GqlApiKey", null, null)
-                ec.entity.makeValue("moqui.gql.GqlApiKey").setAll([
-                        apiKeyId: newId, keyHash: keyHash, companyUserGroupId: companyUserGroupId,
-                        profileId: profileId, clientName: clientName, enabled: "Y",
-                        expireDate: expireDate, createdDate: ec.user.nowTimestamp]).create()
-                apiKeyId = newId
-                apiKey = rawKey
-                // Log identity only — never the raw key or its hash.
-                ec.logger.info("gql: minted API key apiKeyId=${newId} client='${clientName}' tenant=${companyUserGroupId}")
-            ]]></script>
+            <set field="companyUserGroupId" from="darpan.facade.common.TenantAccessSupport.currentActiveTenantUserGroupId(ec)"/>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isTenantAdmin(ec, companyUserGroupId)">
+                <return error="true" message="Minting a public GraphQL API key requires tenant-admin access to the active tenant."/></if>
+            <!-- A profile sets the key's cost and throttle limits; a tenant admin does not choose its own. -->
+            <if condition="profileId &amp;&amp; !darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
+                <return error="true" message="Only a super-admin can give an API key a cost profile."/></if>
+            <!-- Store ONLY the digest; never persist or log the raw key. -->
+            <set field="apiKey" from="org.moqui.gql.auth.ApiKeyHasher.generateRawKey()"/>
+            <set field="apiKeyId" from="ec.entity.sequencedIdPrimary('moqui.gql.GqlApiKey', null, null)"/>
+            <entity-make-value entity-name="moqui.gql.GqlApiKey" value-field="newKey"
+                    map="[apiKeyId:apiKeyId, keyHash:org.moqui.gql.auth.ApiKeyHasher.sha256Hex(apiKey),
+                          companyUserGroupId:companyUserGroupId, profileId:profileId, clientName:clientName,
+                          enabled:'Y', expireDate:expireDate, createdDate:ec.user.nowTimestamp]"/>
+            <entity-create value-field="newKey"/>
+            <log level="info" message="gql: minted API key apiKeyId=${apiKeyId} client='${clientName}' tenant=${companyUserGroupId}"/>
         </actions>
     </service>
 
@@ -111,23 +106,22 @@
     </service>
 
     <!-- DAR-BE-100. Managing agent keys. Every key is read-only: the public tier has no mutations, so there is no scope
-         to choose. Like create#ApiKey, each service is super-admin only and gates itself (the RPC fence lets gql.*
-         through for that reason), and none ever returns or logs a key's digest. -->
+         to choose. Like create#ApiKey, each service gates itself (the RPC fence lets gql.* through for that reason):
+         tenant admin of the active tenant, or super-admin, and only that tenant's keys (DAR-BE-136); another tenant's
+         key reads exactly like a missing one. None ever returns or logs a key's digest. -->
 
     <service verb="list" noun="ApiKeys" authenticate="true" allow-remote="true">
-        <description>The public GraphQL API keys, newest first: id, label (clientName), tenant, profile, whether enabled,
-            created, expires and last used (to the minute). Never the key or its digest. Super-admin only.</description>
-        <in-parameters>
-            <parameter name="companyUserGroupId"><description>Only this tenant's keys; blank is every tenant.</description></parameter>
-        </in-parameters>
+        <description>The active tenant's public GraphQL API keys, newest first: id, label (clientName), tenant, profile,
+            whether enabled, created, expires and last used (to the minute). Never the key or its digest.</description>
         <out-parameters>
             <parameter name="apiKeys" type="List"><description>One Map per key; see the service description.</description></parameter>
         </out-parameters>
         <actions>
-            <if condition="!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
-                <return error="true" message="Listing public GraphQL API keys requires super-admin."/></if>
+            <set field="activeTenantId" from="darpan.facade.common.TenantAccessSupport.currentActiveTenantUserGroupId(ec)"/>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isTenantAdmin(ec, activeTenantId)">
+                <return error="true" message="Listing public GraphQL API keys requires tenant-admin access to the active tenant."/></if>
             <entity-find entity-name="moqui.gql.GqlApiKey" list="keyList" use-cache="false">
-                <econdition field-name="companyUserGroupId" ignore-if-empty="true"/>
+                <econdition field-name="companyUserGroupId" from="activeTenantId"/>
                 <select-field field-name="apiKeyId,clientName,companyUserGroupId,profileId,enabled,expireDate,lastUsedDate,createdDate"/>
                 <order-by field-name="-createdDate"/>
             </entity-find>
@@ -144,13 +138,15 @@
 
     <service verb="disable" noun="ApiKey" authenticate="true" allow-remote="true">
         <description>Turn a key off now: every request with it fails as an invalid API key from the next request on.
-            Idempotent. Super-admin only.</description>
+            Idempotent. Active tenant's keys only.</description>
         <in-parameters><parameter name="apiKeyId" required="true"/></in-parameters>
         <actions>
-            <if condition="!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
-                <return error="true" message="Disabling a public GraphQL API key requires super-admin."/></if>
+            <set field="activeTenantId" from="darpan.facade.common.TenantAccessSupport.currentActiveTenantUserGroupId(ec)"/>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isTenantAdmin(ec, activeTenantId)">
+                <return error="true" message="Disabling a public GraphQL API key requires tenant-admin access to the active tenant."/></if>
             <entity-find-one entity-name="moqui.gql.GqlApiKey" value-field="key" for-update="true"/>
-            <if condition="key == null"><return error="true" message="API key ${apiKeyId} was not found"/></if>
+            <if condition="key == null || key.companyUserGroupId != activeTenantId">
+                <return error="true" message="API key ${apiKeyId} was not found"/></if>
             <set field="key.enabled" value="N"/>
             <entity-update value-field="key"/>
             <log level="info" message="gql: disabled API key apiKeyId=${apiKeyId} client='${key.clientName}' tenant=${key.companyUserGroupId}"/>
@@ -160,7 +156,7 @@
     <service verb="rotate" noun="ApiKey" authenticate="true" allow-remote="true">
         <description>Replace a key without an outage: mints a new key for the same tenant, profile and label, returns
             the RAW new key exactly once, and gives the old key a short expiry so the agent can switch over. Only an
-            enabled, unexpired key can be rotated; a leaked key should be disabled instead. Super-admin only.</description>
+            enabled, unexpired key can be rotated; a leaked key should be disabled instead. Active tenant's keys only.</description>
         <in-parameters>
             <parameter name="apiKeyId" required="true"><description>The key to replace.</description></parameter>
             <parameter name="graceMinutes" type="Integer" default-value="60">
@@ -174,12 +170,14 @@
             <parameter name="oldKeyExpireDate" type="Timestamp"><description>When the old key stops working.</description></parameter>
         </out-parameters>
         <actions>
-            <if condition="!darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
-                <return error="true" message="Rotating a public GraphQL API key requires super-admin."/></if>
+            <set field="activeTenantId" from="darpan.facade.common.TenantAccessSupport.currentActiveTenantUserGroupId(ec)"/>
+            <if condition="!darpan.facade.common.TenantAccessSupport.isTenantAdmin(ec, activeTenantId)">
+                <return error="true" message="Rotating a public GraphQL API key requires tenant-admin access to the active tenant."/></if>
             <if condition="graceMinutes == null || graceMinutes &lt; 0 || graceMinutes &gt; 1440">
                 <return error="true" message="graceMinutes must be between 0 and 1440"/></if>
             <entity-find-one entity-name="moqui.gql.GqlApiKey" value-field="oldKey" for-update="true"/>
-            <if condition="oldKey == null"><return error="true" message="API key ${apiKeyId} was not found"/></if>
+            <if condition="oldKey == null || oldKey.companyUserGroupId != activeTenantId">
+                <return error="true" message="API key ${apiKeyId} was not found"/></if>
             <set field="nowStamp" from="ec.user.nowTimestamp"/>
             <if condition="oldKey.enabled != 'Y' || (oldKey.expireDate != null &amp;&amp; !oldKey.expireDate.after(nowStamp))">
                 <return error="true" message="API key ${apiKeyId} is disabled or expired; mint a new key instead"/></if>
