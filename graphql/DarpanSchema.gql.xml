@@ -40,7 +40,7 @@
          GraphQL shape: a keyed object becomes a list whose elements carry the key (audit.AuditReportServices
          get#AuditReportGraph / get#AuditFindingGraph). Every nested object is an embedded edge, read from the one service
          result, so no type here reads an entity. The tenant is the key's: tenant-param, never an argument.
-         Enum-valued fields carry the JSON's code as a String (open / pending / fixed ...). -->
+         Enum-valued fields carry the JSON's code as a String (open / fixed ...). -->
     <root-query name="auditReport" description="An audit's report for one morning, from the tenant of the API key." target-type="AuditReportDocument" service="true"
             service-name="audit.AuditReportServices.get#AuditReportGraph" service-out="report" tenant-param="companyUserGroupId">
         <arg name="audit" description="The audit's code, e.g. month-close." type="String" required="true"/>
@@ -93,7 +93,7 @@
     </gql-type>
     <gql-type name="AuditWindow" description="The days the checks read, both ends inclusive, in the tenant's time zone.">
         <field name="from" description="The first day the checks read: the period's first day, so every open finding of the period is examined again each morning (DAR-BE-091)."/>
-        <field name="thru" description="The last day the checks read, inclusive: `date` itself while the period is current (&quot;on the 14th it reconciles 1-14&quot;), the period's last day once it has ended. Records from that morning are usually inside their check's grace age, so they show as `pending`."/>
+        <field name="thru" description="The last day the checks read, inclusive: `date` itself while the period is current (&quot;on the 14th it reconciles 1-14&quot;), the period's last day once it has ended."/>
     </gql-type>
     <gql-type name="AuditHealth" description="Whether this morning's reads and checks can be trusted.">
         <field name="complete" description="True only when every source read was complete and every configured check ran. Statements with no configured check do not make it false; they are listed in `notCovered`." type="Boolean"/>
@@ -117,11 +117,10 @@
     </gql-type>
     <gql-type name="AuditSummary" description="Counts across the whole tenant, and the oldest open finding.">
         <field name="open" description="Findings in state `open`." type="Int"/>
-        <field name="pending" description="Findings in state `pending`, still inside their check's grace age." type="Int"/>
-        <field name="newToday" description="Findings first found on `report.date`, whether open or pending." type="Int"/>
+        <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
         <edge name="oldestOpen" description="The open finding with the earliest `firstFound`." kind="embedded" target-type="OldestOpen"/>
-        <edge name="byCategory" description="The same four counts (`open`, `pending`, `newToday`, `fixedToday`) for each category; all four categories are present." kind="embedded" target-type="CategoryCounts" list="true"/>
+        <edge name="byCategory" description="The same three counts (`open`, `newToday`, `fixedToday`) for each category; all four categories are present." kind="embedded" target-type="CategoryCounts" list="true"/>
     </gql-type>
     <gql-type name="OldestOpen" description="The open finding with the earliest `firstFound`.">
         <field name="id" description="The finding's id."/>
@@ -129,23 +128,21 @@
         <field name="firstFound" description="The morning it was first found."/>
         <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
     </gql-type>
-    <gql-type name="CategoryCounts" description="The four finding counts for one category.">
+    <gql-type name="CategoryCounts" description="The three finding counts for one category.">
         <field name="category" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
         <field name="open" description="Findings in state `open`." type="Int"/>
-        <field name="pending" description="Findings in state `pending`, still inside their check's grace age." type="Int"/>
-        <field name="newToday" description="Findings first found on `report.date`, whether open or pending." type="Int"/>
+        <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
     </gql-type>
-    <gql-type name="FindingCounts" description="Findings by state for a category or statement: open, pending, new today and fixed today.">
+    <gql-type name="FindingCounts" description="Findings by state for a category or statement: open, new today and fixed today.">
         <field name="open" description="Findings in state `open`." type="Int"/>
-        <field name="pending" description="Findings in state `pending`, still inside their check's grace age." type="Int"/>
-        <field name="newToday" description="Findings first found on `report.date`, whether open or pending." type="Int"/>
+        <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
     </gql-type>
     <gql-type name="Category" description="One of the four categories (orders, refundsAndCredits, returns, exchangesAndWarranty), with its statements.">
         <field name="id" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
         <field name="label" description="The category's display name, e.g. &quot;Refunds and credits&quot;."/>
-        <edge name="counts" description="`open`, `pending`, `newToday` and `fixedToday` for this category." kind="embedded" target-type="FindingCounts"/>
+        <edge name="counts" description="`open`, `newToday` and `fixedToday` for this category." kind="embedded" target-type="FindingCounts"/>
         <edge name="statements" description="Every catalog statement in this category; [] only when the tenant has none in it." kind="embedded" target-type="Statement" list="true"
                 lookup="statement" lookup-description="One statement of this category by its id; null when the category has no statement with that id."
                 lookup-arg-description="The statement id in the tenant's catalog, e.g. R8."/>
@@ -159,7 +156,7 @@
         <field name="findingsOmitted" description="How many findings were left out by the 50 cap; `0` when all are shown." type="Int"/>
         <edge name="checks" description="Each configured check that tests this statement; `[]` when none is configured." kind="embedded" target-type="StatementCheck" list="true"/>
         <edge name="counts" description="Ledger counts for this statement; never null, even when its check did not run today." kind="embedded" target-type="FindingCounts"/>
-        <edge name="findings" description="Open, pending and fixed-today findings, oldest first, at most 50." kind="embedded" target-type="FindingSummary" list="true"/>
+        <edge name="findings" description="Open and fixed-today findings, oldest first, at most 50." kind="embedded" target-type="FindingSummary" list="true"/>
     </gql-type>
     <gql-type name="StatementCheck" description="A configured check that tests a statement, and how it ran this morning.">
         <field name="id" description="The check's id."/>
@@ -167,7 +164,6 @@
         <field name="status" description="How this check ran this morning."/>
         <field name="reason" description="Why it was partial or did not run."/>
         <field name="matchedBy" description='The shared id that the two sides are joined on, e.g. "return id (custbody_hc_return_id)".'/>
-        <field name="graceDays" description="Days a new finding stays `pending` before it counts as open; `0` means none." type="Int"/>
         <edge name="compared" description="Records compared on each side." kind="embedded" target-type="SystemCount" list="true"/>
     </gql-type>
     <gql-type name="SystemCount" description="Records compared in one system.">
@@ -177,7 +173,7 @@
     <gql-type name="FindingSummary" description="A finding as a report lists it; auditFinding(id:) returns the whole finding.">
         <field name="id" description="The finding's id."/>
         <field name="headline" description="One line naming the record and what is wrong."/>
-        <field name="state" description="`open`, `pending` or `fixed` (fixed today)."/>
+        <field name="state" description="`open` or `fixed` (fixed today)."/>
         <field name="firstFound" description="The morning a check first reported it."/>
         <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
         <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
@@ -199,7 +195,7 @@
         <field name="category" description="The statement's category: `orders`, `refundsAndCredits`, `returns` or `exchangesAndWarranty`."/>
         <field name="period" description="The period whose run found it, e.g. `2026-10`."/>
         <field name="headline" description="One line naming the record and what is wrong."/>
-        <field name="state" description="`open`, `pending` or `fixed`, as of the last check."/>
+        <field name="state" description="`open` or `fixed`, as of the last check."/>
         <field name="firstFound" description="The morning a check first reported it."/>
         <field name="lastSeen" description="The last morning a check reported it."/>
         <field name="ageDays" description="Days since `firstFound`, as of today in the tenant's time zone." type="Int"/>
@@ -264,7 +260,6 @@
         <field name="lastChecked" description="When a check last looked at this record, whether or not it reported it."/>
         <field name="ageDays" description="Days from `firstFound` to `lastSeen`, or to the closing day once fixed." type="Int"/>
         <field name="timesSeen" description="Mornings on which a check reported it, counting the first." type="Int"/>
-        <field name="pendingUntil" description="The first morning it counts as open if it is still reported."/>
         <field name="closedAt" description="When it became fixed."/>
         <edge name="closedBy" description="What closed it: in v1, always the scheduled check." kind="embedded" target-type="EventActor"/>
     </gql-type>
