@@ -17,6 +17,9 @@
     <!-- Browser CORS for the API-key realm: origins listed in webapp_public_api_origins (set per deployment) may call
          these paths from a page WITHOUT credentials (MoquiServlet.handlePublicApiCors), e.g. a docs-site explorer.
          The session realm (POST /rest/s1/graphql) is deliberately not listed. -->
+    <!-- DAR-BE-267: the longest a public GraphQL API key may last from mint or rotation (days). -->
+    <default-property name="gql.apiKey.maxDays" value="90"/>
+
     <default-property name="webapp_public_api_paths" value="/rest/s1/graphql/public,/rest/s1/graphql/sdl"/>
 
     <!-- Query-log v2 policy (see docs/implementation-plan-query-log-v2.md). Raw GqlQueryLog rows:

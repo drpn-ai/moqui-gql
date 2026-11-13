@@ -98,10 +98,12 @@
         <field name="profileId" type="id"><description>Optional cost/governor profile (GqlCallerProfile). Null = global defaults.</description></field>
         <field name="clientName" type="text-medium"><description>Human-readable client identity for audit/identification.</description></field>
         <field name="enabled" type="text-indicator"><default>Y</default></field>
-        <field name="expireDate" type="date-time"><description>Optional expiry; once passed the key resolves invalid (fail-closed).</description></field>
+        <field name="expireDate" type="date-time"><description>Once passed the key resolves invalid (fail-closed). Set on every key minted since DAR-BE-267 (at most gql.apiKey.maxDays out); empty only on older keys, which never expire.</description></field>
         <field name="lastUsedDate" type="date-time"><description>Best-effort last successful resolution timestamp.</description></field>
         <field name="createdDate" type="date-time"/>
+        <field name="createdByUserId" type="id"><description>Who minted the key (create#ApiKey or rotate#ApiKey). Empty on keys minted before DAR-BE-267.</description></field>
         <relationship type="one" related="moqui.gql.GqlCallerProfile"><key-map field-name="profileId"/></relationship>
+        <relationship type="one-nofk" title="CreatedBy" related="moqui.security.UserAccount"><key-map field-name="createdByUserId" related-field-name="userId"/></relationship>
         <index name="GQL_APIKEY_HASH" unique="true"><index-field name="keyHash"/></index>
     </entity>
 

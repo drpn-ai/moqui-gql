@@ -16,7 +16,8 @@
         <in-parameters>
             <parameter name="clientName" required="true"><description>Human-readable client identity for audit.</description></parameter>
             <parameter name="profileId"><description>Optional cost/governor profile (GqlCallerProfile). Super-admin only.</description></parameter>
-            <parameter name="expireDate" type="Timestamp"><description>Optional expiry; null = never expires.</description></parameter>
+            <parameter name="expireDate" type="Timestamp"><description>When the key stops working: at most gql.apiKey.maxDays
+                (90 by default) from now; blank = that maximum. No key is minted to last forever (DAR-BE-267).</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="apiKey"><description>The RAW key, shown ONCE and not recoverable. Deliver securely to the client.</description></parameter>
@@ -30,15 +31,26 @@
             <!-- A profile sets the key's cost and throttle limits; a tenant admin does not choose its own. -->
             <if condition="profileId &amp;&amp; !darpan.facade.common.TenantAccessSupport.isSuperAdmin(ec)">
                 <return error="true" message="Only a super-admin can give an API key a cost profile."/></if>
+            <!-- DAR-BE-267: every key has an end, at most gql.apiKey.maxDays away. -->
+            <set field="nowStamp" from="ec.user.nowTimestamp"/>
+            <set field="latestExpireDate" from="org.moqui.gql.auth.ApiKeyLifetime.latestExpireDate(nowStamp)"/>
+            <if condition="expireDate == null"><set field="expireDate" from="latestExpireDate"/></if>
+            <if condition="expireDate.after(latestExpireDate)">
+                <return error="true" message="An API key can last at most ${org.moqui.gql.auth.ApiKeyLifetime.maxDays()} days; choose an expiry on or before ${latestExpireDate}."/></if>
             <!-- Store ONLY the digest; never persist or log the raw key. -->
             <set field="apiKey" from="org.moqui.gql.auth.ApiKeyHasher.generateRawKey()"/>
             <set field="apiKeyId" from="ec.entity.sequencedIdPrimary('moqui.gql.GqlApiKey', null, null)"/>
             <entity-make-value entity-name="moqui.gql.GqlApiKey" value-field="newKey"
                     map="[apiKeyId:apiKeyId, keyHash:org.moqui.gql.auth.ApiKeyHasher.sha256Hex(apiKey),
                           companyUserGroupId:companyUserGroupId, profileId:profileId, clientName:clientName,
-                          enabled:'Y', expireDate:expireDate, createdDate:ec.user.nowTimestamp]"/>
+                          enabled:'Y', expireDate:expireDate, createdDate:nowStamp, createdByUserId:ec.user.userId]"/>
             <entity-create value-field="newKey"/>
-            <log level="info" message="gql: minted API key apiKeyId=${apiKeyId} client='${clientName}' tenant=${companyUserGroupId}"/>
+            <!-- Audit trail: one AdminAuditLog row (darpan, same transaction). Identity only, never the key or its digest. -->
+            <service-call name="create#darpan.admin.AdminAuditLog" in-map="[adminUserId:ec.user.userId,
+                    serviceName:'gql.GqlAuthServices.create#ApiKey', targetType:'GqlApiKey', targetId:apiKeyId,
+                    detailText:'Minted public GraphQL API key ' + apiKeyId + ' (client \'' + clientName + '\') for tenant ' + companyUserGroupId + ', expires ' + expireDate,
+                    auditTimestamp:nowStamp]"/>
+            <log level="info" message="gql: minted API key apiKeyId=${apiKeyId} client='${clientName}' tenant=${companyUserGroupId} expires=${expireDate} by=${ec.user.userId}"/>
         </actions>
     </service>
 
@@ -112,7 +124,7 @@
 
     <service verb="list" noun="ApiKeys" authenticate="true" allow-remote="true">
         <description>The active tenant's public GraphQL API keys, newest first: id, label (clientName), tenant, profile,
-            whether enabled, created, expires and last used (to the minute). Never the key or its digest.</description>
+            whether enabled, created (and by whom), expires and last used (to the minute). Never the key or its digest.</description>
         <out-parameters>
             <parameter name="apiKeys" type="List"><description>One Map per key; see the service description.</description></parameter>
         </out-parameters>
@@ -122,14 +134,14 @@
                 <return error="true" message="Listing public GraphQL API keys requires tenant-admin access to the active tenant."/></if>
             <entity-find entity-name="moqui.gql.GqlApiKey" list="keyList" use-cache="false">
                 <econdition field-name="companyUserGroupId" from="activeTenantId"/>
-                <select-field field-name="apiKeyId,clientName,companyUserGroupId,profileId,enabled,expireDate,lastUsedDate,createdDate"/>
+                <select-field field-name="apiKeyId,clientName,companyUserGroupId,profileId,enabled,expireDate,lastUsedDate,createdDate,createdByUserId"/>
                 <order-by field-name="-createdDate"/>
             </entity-find>
             <set field="nowStamp" from="ec.user.nowTimestamp"/>
             <set field="apiKeys" from="[]"/>
             <iterate list="keyList" entry="key">
                 <script>apiKeys.add([apiKeyId: key.apiKeyId, clientName: key.clientName, companyUserGroupId: key.companyUserGroupId,
-                        profileId: key.profileId, enabled: key.enabled == 'Y', createdDate: key.createdDate,
+                        profileId: key.profileId, enabled: key.enabled == 'Y', createdDate: key.createdDate, createdByUserId: key.createdByUserId,
                         expireDate: key.expireDate, lastUsedDate: key.lastUsedDate,
                         active: key.enabled == 'Y' &amp;&amp; (key.expireDate == null || key.expireDate.after(nowStamp))])</script>
             </iterate>
@@ -147,9 +159,14 @@
             <entity-find-one entity-name="moqui.gql.GqlApiKey" value-field="key" for-update="true"/>
             <if condition="key == null || key.companyUserGroupId != activeTenantId">
                 <return error="true" message="API key ${apiKeyId} was not found"/></if>
+            <if condition="key.enabled != 'Y'"><return/></if>
             <set field="key.enabled" value="N"/>
             <entity-update value-field="key"/>
-            <log level="info" message="gql: disabled API key apiKeyId=${apiKeyId} client='${key.clientName}' tenant=${key.companyUserGroupId}"/>
+            <service-call name="create#darpan.admin.AdminAuditLog" in-map="[adminUserId:ec.user.userId,
+                    serviceName:'gql.GqlAuthServices.disable#ApiKey', targetType:'GqlApiKey', targetId:apiKeyId,
+                    detailText:'Disabled public GraphQL API key ' + apiKeyId + ' (client \'' + key.clientName + '\') of tenant ' + key.companyUserGroupId,
+                    auditTimestamp:ec.user.nowTimestamp]"/>
+            <log level="info" message="gql: disabled API key apiKeyId=${apiKeyId} client='${key.clientName}' tenant=${key.companyUserGroupId} by=${ec.user.userId}"/>
         </actions>
     </service>
 
@@ -162,7 +179,8 @@
             <parameter name="graceMinutes" type="Integer" default-value="60">
                 <description>How long the old key keeps working, 0 to 1440 minutes; 0 ends it now.</description></parameter>
             <parameter name="expireDate" type="Timestamp">
-                <description>The new key's expiry; blank keeps the old key's expiry, if it has one.</description></parameter>
+                <description>The new key's expiry, at most gql.apiKey.maxDays from now; blank keeps the old key's expiry,
+                    brought within that maximum (a key that never expired gets the maximum).</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="apiKey"><description>The RAW new key, shown ONCE and not recoverable.</description></parameter>
@@ -182,18 +200,27 @@
             <if condition="oldKey.enabled != 'Y' || (oldKey.expireDate != null &amp;&amp; !oldKey.expireDate.after(nowStamp))">
                 <return error="true" message="API key ${apiKeyId} is disabled or expired; mint a new key instead"/></if>
 
+            <set field="latestExpireDate" from="org.moqui.gql.auth.ApiKeyLifetime.latestExpireDate(nowStamp)"/>
+            <if condition="expireDate != null &amp;&amp; expireDate.after(latestExpireDate)">
+                <return error="true" message="An API key can last at most ${org.moqui.gql.auth.ApiKeyLifetime.maxDays()} days; choose an expiry on or before ${latestExpireDate}."/></if>
+            <set field="newExpireDate" from="expireDate ?: (oldKey.expireDate != null &amp;&amp; oldKey.expireDate.before(latestExpireDate) ? oldKey.expireDate : latestExpireDate)"/>
+
             <set field="apiKey" from="org.moqui.gql.auth.ApiKeyHasher.generateRawKey()"/>
             <set field="newApiKeyId" from="ec.entity.sequencedIdPrimary('moqui.gql.GqlApiKey', null, null)"/>
             <entity-make-value entity-name="moqui.gql.GqlApiKey" value-field="newKey"
                     map="[apiKeyId:newApiKeyId, keyHash:org.moqui.gql.auth.ApiKeyHasher.sha256Hex(apiKey),
                           companyUserGroupId:oldKey.companyUserGroupId, profileId:oldKey.profileId, clientName:oldKey.clientName,
-                          enabled:'Y', expireDate:(expireDate ?: oldKey.expireDate), createdDate:nowStamp]"/>
+                          enabled:'Y', expireDate:newExpireDate, createdDate:nowStamp, createdByUserId:ec.user.userId]"/>
             <entity-create value-field="newKey"/>
 
             <set field="graceEnd" from="new java.sql.Timestamp(nowStamp.time + graceMinutes * 60000L)"/>
             <set field="oldKey.expireDate" from="oldKey.expireDate != null &amp;&amp; oldKey.expireDate.before(graceEnd) ? oldKey.expireDate : graceEnd"/>
             <entity-update value-field="oldKey"/>
             <set field="oldKeyExpireDate" from="oldKey.expireDate"/>
+            <service-call name="create#darpan.admin.AdminAuditLog" in-map="[adminUserId:ec.user.userId,
+                    serviceName:'gql.GqlAuthServices.rotate#ApiKey', targetType:'GqlApiKey', targetId:newApiKeyId,
+                    detailText:'Rotated public GraphQL API key ' + apiKeyId + ' to ' + newApiKeyId + ' (client \'' + oldKey.clientName + '\') for tenant ' + oldKey.companyUserGroupId + '; new key expires ' + newExpireDate + ', old key ends ' + oldKeyExpireDate,
+                    auditTimestamp:nowStamp]"/>
             <!-- Identity only: never the raw key or a digest. -->
             <log level="info" message="gql: rotated API key apiKeyId=${apiKeyId} -> ${newApiKeyId} client='${oldKey.clientName}' tenant=${oldKey.companyUserGroupId}; old key ends ${oldKeyExpireDate}"/>
         </actions>

@@ -52,10 +52,13 @@ not set that field on profiles for Darpan users.
 ## Public API-key realm
 
 - `gql.GqlAuthServices.create#ApiKey` mints a key for the caller's active tenant, labelled by
-  `clientName`, with an optional `expireDate`. Tenant admin of that tenant, or super-admin. The tenant
+  `clientName`, with an `expireDate` at most `gql.apiKey.maxDays` (90) days out; blank means that
+  maximum, so no key lasts forever. Tenant admin of that tenant, or super-admin. The tenant
   is not an input: an admin of several tenants gets a key for the one they are signed into. Only a
   super-admin may set `profileId`. The raw key (prefix `dgql_`) is returned once; only its SHA-256
-  digest is stored in `GqlApiKey`.
+  digest is stored in `GqlApiKey`, with `createdByUserId`. Mint, rotate and disable each write a
+  darpan `AdminAuditLog` row (identity only, never the key or digest). Keys minted before this have no
+  expiry and still never expire until they are rotated or disabled.
 - `resolve#ApiKey` looks the key up by digest. Missing, unknown, disabled or expired keys all get the
   same `UNAUTHENTICATED` error and the query does not run. A session without a key is rejected.
 - A key may carry a `GqlCallerProfile` (cost and throttle limits). The throttle bucket and the query
