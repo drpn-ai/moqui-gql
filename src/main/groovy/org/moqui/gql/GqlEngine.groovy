@@ -130,9 +130,9 @@ class GqlEngine {
         }
         boolean scoped = false
         try {
-            // Darpan fork: tenant row-scope is MANDATORY (shared-DB multi-tenancy). Default EVERY request to
-            // the fail-closed DarpanTenantScopeFilter so reads can never span tenants; a caller profile's
-            // productStore scope (OMS heritage) still overrides when explicitly set.
+            // Darpan fork: tenant row-scope is MANDATORY (shared-DB multi-tenancy). EVERY request gets the
+            // fail-closed DarpanTenantScopeFilter so reads can never span tenants; a caller profile's
+            // productStore scope (OMS heritage) only narrows it further (DAR-BE-282: it used to replace it).
             if (publicRealm) {
                 // PUBLIC API-key realm: the tenant pin is MANDATORY and UNCONDITIONAL — always the
                 // fixed-tenant filter from the key's tenant (a blank overrideTenantId denies = zero rows).
@@ -140,8 +140,10 @@ class GqlEngine {
                 // and ProductStoreScopeFilter leaves entities lacking a productStoreId column UNSCOPED, which
                 // on the public path is a cross-tenant read. So scopeStore is deliberately ignored here.
                 ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter(overrideTenantId))
-            } else if (scopeStore) { ScopeFilters.set(new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore)) }
-            else { ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter()) }
+            } else {
+                ScopeFilters.set(new org.moqui.gql.scope.DarpanTenantScopeFilter(
+                        scopeStore ? new org.moqui.gql.scope.ProductStoreScopeFilter(scopeStore) : null))
+            }
             scoped = true
             List<NestedEdgeMeta> metas = nestedEdgeMetas()
             GraphQLSchema executable = withFetchers(metas)

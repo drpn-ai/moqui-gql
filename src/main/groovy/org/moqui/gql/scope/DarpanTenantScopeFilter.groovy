@@ -39,11 +39,20 @@ class DarpanTenantScopeFilter implements ScopeFilter {
     /** Marks the fixed-tenant variant so a blank fixedTenantId denies (zero rows) instead of falling
      *  through to the session path. */
     private final boolean fixedMode
+    /** DAR-BE-282: a further restriction (a caller profile's productStore scope) ANDed onto the tenant pin,
+     *  never in place of it. Null for none. */
+    private final ScopeFilter narrowedBy
 
     /** Session path: resolve the active tenant per-find via TenantAccessSupport. Unchanged behaviour. */
     DarpanTenantScopeFilter() {
+        this((ScopeFilter) null)
+    }
+
+    /** Session path narrowed further by {@code narrowedBy} (e.g. a store scope); the tenant pin always stays. */
+    DarpanTenantScopeFilter(ScopeFilter narrowedBy) {
         this.fixedTenantId = null
         this.fixedMode = false
+        this.narrowedBy = narrowedBy
     }
 
     /** Public API-key path: pin the tenant at construction. A blank/null fixedTenantId is fail-closed —
@@ -51,6 +60,7 @@ class DarpanTenantScopeFilter implements ScopeFilter {
     DarpanTenantScopeFilter(String fixedTenantId) {
         this.fixedTenantId = (fixedTenantId != null && !fixedTenantId.trim().isEmpty()) ? fixedTenantId : null
         this.fixedMode = true
+        this.narrowedBy = null
     }
 
     /**
@@ -77,7 +87,10 @@ class DarpanTenantScopeFilter implements ScopeFilter {
             String activeTenant = TenantAccessSupport.currentActiveTenantUserGroupId(ec)
             value = activeTenant ?: NO_TENANT
         }
-        return ec.entity.conditionFactory.makeCondition(
+        EntityCondition tenantCondition = ec.entity.conditionFactory.makeCondition(
                 "companyUserGroupId", EntityCondition.ComparisonOperator.EQUALS, value)
+        EntityCondition narrower = narrowedBy?.conditionFor(entityName, ec)
+        if (narrower == null) return tenantCondition
+        return ec.entity.conditionFactory.makeCondition(tenantCondition, EntityCondition.JoinOperator.AND, narrower)
     }
 }
