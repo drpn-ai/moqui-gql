@@ -119,8 +119,9 @@
         <field name="open" description="Findings in state `open`." type="Int"/>
         <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
+        <edge name="byPriority" description="Open findings at each level (`P0`, `P1`, `P2`, `KNOWN`); every open finding is counted once, so they add up to `open`." kind="embedded" target-type="PriorityCounts"/>
         <edge name="oldestOpen" description="The open finding with the earliest `firstFound`." kind="embedded" target-type="OldestOpen"/>
-        <edge name="byCategory" description="The same three counts (`open`, `newToday`, `fixedToday`) for each category; all four categories are present." kind="embedded" target-type="CategoryCounts" list="true"/>
+        <edge name="byCategory" description="The same counts (`open`, `newToday`, `fixedToday`, `byPriority`) for each category; all four categories are present." kind="embedded" target-type="CategoryCounts" list="true"/>
     </gql-type>
     <gql-type name="OldestOpen" description="The open finding with the earliest `firstFound`.">
         <field name="id" description="The finding's id."/>
@@ -128,16 +129,24 @@
         <field name="firstFound" description="The morning it was first found."/>
         <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
     </gql-type>
-    <gql-type name="CategoryCounts" description="The three finding counts for one category.">
+    <gql-type name="CategoryCounts" description="The finding counts for one category.">
         <field name="category" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
         <field name="open" description="Findings in state `open`." type="Int"/>
         <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
+        <edge name="byPriority" description="Open findings at each level (`P0`, `P1`, `P2`, `KNOWN`); every open finding is counted once, so they add up to `open`." kind="embedded" target-type="PriorityCounts"/>
     </gql-type>
     <gql-type name="FindingCounts" description="Findings by state for a category or statement: open, new today and fixed today.">
         <field name="open" description="Findings in state `open`." type="Int"/>
         <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
+        <edge name="byPriority" description="Open findings at each level (`P0`, `P1`, `P2`, `KNOWN`); every open finding is counted once, so they add up to `open`." kind="embedded" target-type="PriorityCounts"/>
+    </gql-type>
+    <gql-type name="PriorityCounts" description="Open findings by priority, most urgent first. An order counts once, at its most urgent line; a finding waiting on an earlier step is not counted.">
+        <field name="P0" description="Open findings at P0: fix now." type="Int"/>
+        <field name="P1" description="Open findings at P1: fix soon." type="Int"/>
+        <field name="P2" description="Open findings at P2: fix when convenient. A statement with no level set counts here." type="Int"/>
+        <field name="KNOWN" description="Open findings at KNOWN: understood and tracked." type="Int"/>
     </gql-type>
     <gql-type name="Category" description="One of the four categories (orders, refundsAndCredits, returns, exchangesAndWarranty), with its statements.">
         <field name="id" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
@@ -151,6 +160,7 @@
         <field name="id" description="The statement id, e.g. R4."/>
         <field name="text" description="The statement in the tenant's own words."/>
         <field name="weight" description="Whether the tenant stated it (`firm`) or it was derived and awaits confirmation (`derived`)."/>
+        <field name="priority" description="The statement's own level: `P0`, `P1`, `P2` or `KNOWN`; `P2` when none is set. A reason may set its findings' level apart."/>
         <field name="status" description="The worst status among this statement's checks; `notRun` when it has none."/>
         <field name="reason" description="Why the statement's checks were partial or did not run."/>
         <field name="findingsOmitted" description="How many findings were left out by the 50 cap; `0` when all are shown." type="Int"/>
@@ -177,6 +187,8 @@
         <field name="firstFound" description="The morning a check first reported it."/>
         <field name="ageDays" description="Days since `firstFound`, as of `report.date`." type="Int"/>
         <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
+        <field name="priority" description="The finding's level: its reason's level when one is set, else its statement's (an order takes its most urgent line's)."/>
+        <field name="prioritySource" description="Where `priority` came from: `reason` or `statement`."/>
         <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
         <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
     </gql-type>
@@ -200,6 +212,8 @@
         <field name="lastSeen" description="The last morning a check reported it."/>
         <field name="ageDays" description="Days since `firstFound`, as of today in the tenant's time zone." type="Int"/>
         <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
+        <field name="priority" description="The finding's level: its reason's level when one is set, else its statement's."/>
+        <field name="prioritySource" description="Where `priority` came from: `reason` or `statement`."/>
         <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
         <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
     </gql-type>
@@ -231,6 +245,7 @@
         <edge name="audit" description="The audit the broken statement belongs to." kind="embedded" target-type="AuditRef"/>
         <edge name="category" description="The category of the statement it breaks." kind="embedded" target-type="CategoryRef"/>
         <edge name="statement" description="The statement it breaks." kind="embedded" target-type="StatementRef"/>
+        <edge name="priority" description="How urgent it is and where that level came from." kind="embedded" target-type="FindingPriority"/>
         <edge name="check" description="The check that found it." kind="embedded" target-type="CheckRef"/>
         <edge name="status" description="Where the finding stands now." kind="embedded" target-type="FindingStatus"/>
         <edge name="records" description="The record ids in each system." kind="embedded" target-type="FindingRecord" list="true"/>
@@ -247,6 +262,11 @@
         <field name="id" description="The statement it breaks."/>
         <field name="text" description="That statement in the tenant's own words, repeated so the finding stands alone."/>
         <field name="weight" description="`firm` or `derived`."/>
+    </gql-type>
+    <gql-type name="FindingPriority" description="A finding's level and where it came from: its reason's level when one is set, else its statement's.">
+        <field name="level" description="`P0`, `P1`, `P2` or `KNOWN`."/>
+        <field name="source" description="`reason` when the finding's reason sets the level, `statement` when it is the statement's own."/>
+        <field name="reason" description="The reason's name when `source` is `reason`; null otherwise."/>
     </gql-type>
     <gql-type name="CheckRef" description="The check that found a finding.">
         <field name="id" description="The check that found it."/>
