@@ -53,7 +53,7 @@
     </root-query>
     <!-- DAR-BE-098. Every finding of the key's tenant, across audits, statements and periods: the CLI's `findings list` and
          `month export`. Each node is the report's finding summary plus where it sits, so it reads like the JSON. -->
-    <root-query name="findings" description="The tenant's findings, oldest first by default; each node is the report's finding summary plus its audit, statement, category and period, filterable by `priority` (P0, P1, P2 or KNOWN). ageDays is as of today in the tenant's time zone."
+    <root-query name="findings" description="The tenant's findings, oldest first by default; each node is the report's finding summary plus its audit, statement, category and period, filterable by `priority` (P0, P1, P2 or KNOWN), which filters finding LINES by their own level; the board's byPriority counts ORDERS at their most urgent open line, so totals can differ. ageDays is as of today in the tenant's time zone."
             target-type="FindingListItemConnection" service="true" service-name="audit.AuditReportServices.get#AuditFindingsGraph"
             service-out="page" tenant-param="companyUserGroupId"
             search-keys="audit:eq statement:eq,in category:eq,in state:eq,in period:eq,in priority:eq,in firstFound:eq,gt,gte,lt,lte"
@@ -136,7 +136,7 @@
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
         <edge name="byPriority" description="Open findings at each level (`P0`, `P1`, `P2`, `KNOWN`); every open finding is counted once, so they add up to `open`." kind="embedded" target-type="PriorityCounts"/>
     </gql-type>
-    <gql-type name="FindingCounts" description="Findings by state for a category or statement: open, new today and fixed today.">
+    <gql-type name="FindingCounts" description="Findings by state for a category or statement: open, new today and fixed today, and `byPriority`: open findings per priority level.">
         <field name="open" description="Findings in state `open`." type="Int"/>
         <field name="newToday" description="Findings first found on `report.date` and still open." type="Int"/>
         <field name="fixedToday" description="Findings that became `fixed` on `report.date`." type="Int"/>
@@ -151,7 +151,7 @@
     <gql-type name="Category" description="One of the four categories (orders, refundsAndCredits, returns, exchangesAndWarranty), with its statements.">
         <field name="id" description="The category: orders, refundsAndCredits, returns or exchangesAndWarranty."/>
         <field name="label" description="The category's display name, e.g. &quot;Refunds and credits&quot;."/>
-        <edge name="counts" description="`open`, `newToday` and `fixedToday` for this category." kind="embedded" target-type="FindingCounts"/>
+        <edge name="counts" description="`open`, `newToday` and `fixedToday` for this category, and `byPriority`: open findings per priority level." kind="embedded" target-type="FindingCounts"/>
         <edge name="statements" description="Every catalog statement in this category; [] only when the tenant has none in it." kind="embedded" target-type="Statement" list="true"
                 lookup="statement" lookup-description="One statement of this category by its id; null when the category has no statement with that id."
                 lookup-arg-description="The statement id in the tenant's catalog, e.g. R8."/>
@@ -189,6 +189,8 @@
         <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
         <field name="priority" description="The finding's level: its reason's level when one is set, else its statement's (an order takes its most urgent line's)."/>
         <field name="prioritySource" description="Where `priority` came from: `reason` or `statement`."/>
+        <field name="priorityReason" description="The reason that put it at this level, by name; null when the level is its statement's. For an order, the winning line's reason."/>
+        <field name="priorityLine" description="For an order, the id of the open line whose level it takes (its most urgent); null for a single finding."/>
         <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
         <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
     </gql-type>
@@ -214,6 +216,8 @@
         <field name="next" description="The CLI command that shows the full finding, e.g. `darpan findings show F-20761`."/>
         <field name="priority" description="The finding's level: its reason's level when one is set, else its statement's."/>
         <field name="prioritySource" description="Where `priority` came from: `reason` or `statement`."/>
+        <field name="priorityReason" description="The reason that put it at this level, by name; null when the level is its statement's. For an order, the winning line's reason."/>
+        <field name="priorityLine" description="For an order, the id of the open line whose level it takes (its most urgent); null for a single finding."/>
         <edge name="records" description="The records it names: one entry per system, record type and id." kind="embedded" target-type="FindingRecord" list="true"/>
         <edge name="difference" description="`actual - expected`." kind="embedded" target-type="Money"/>
     </gql-type>
@@ -263,7 +267,7 @@
         <field name="text" description="That statement in the tenant's own words, repeated so the finding stands alone."/>
         <field name="weight" description="`firm` or `derived`."/>
     </gql-type>
-    <gql-type name="FindingPriority" description="A finding's level and where it came from: its reason's level when one is set, else its statement's.">
+    <gql-type name="FindingPriority" description="A finding line's own level and where it came from: its reason's level when one is set, else its statement's. An order's level is its most urgent open line's; see the order unit's priorityLine.">
         <field name="level" description="`P0`, `P1`, `P2` or `KNOWN`."/>
         <field name="source" description="`reason` when the finding's reason sets the level, `statement` when it is the statement's own."/>
         <field name="reason" description="The reason's name when `source` is `reason`; null otherwise."/>
