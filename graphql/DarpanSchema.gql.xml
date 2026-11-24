@@ -53,10 +53,10 @@
     </root-query>
     <!-- DAR-BE-098. Every finding of the key's tenant, across audits, statements and periods: the CLI's `findings list` and
          `month export`. Each node is the report's finding summary plus where it sits, so it reads like the JSON. -->
-    <root-query name="findings" description="The tenant's findings, oldest first by default; each node is the report's finding summary plus its audit, statement, category and period. ageDays is as of today in the tenant's time zone."
+    <root-query name="findings" description="The tenant's findings, oldest first by default; each node is the report's finding summary plus its audit, statement, category and period, filterable by `priority` (P0, P1, P2 or KNOWN). ageDays is as of today in the tenant's time zone."
             target-type="FindingListItemConnection" service="true" service-name="audit.AuditReportServices.get#AuditFindingsGraph"
             service-out="page" tenant-param="companyUserGroupId"
-            search-keys="audit:eq statement:eq,in category:eq,in state:eq,in period:eq,in firstFound:eq,gt,gte,lt,lte"
+            search-keys="audit:eq statement:eq,in category:eq,in state:eq,in period:eq,in priority:eq,in firstFound:eq,gt,gte,lt,lte"
             sort-keys="FIRST_FOUND:firstFound STATEMENT:statement">
         <arg name="first" description="Return the first n findings, 1 to 100; default 50." type="Int"/>
         <arg name="after" description="Return findings after this cursor (pageInfo.endCursor). A cursor belongs to its sortKey and reverse."/>
